@@ -1,0 +1,2256 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Provides Secure AWS Operations Management Platform foundation implementation for primary region"
+
+Parameters:
+  PrincipalOrgID:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: HCOM-Setting-PrincipalOrgID
+    Description: DO NOT MODIFY - pulling from Step 1 template
+    AllowedValues:
+      - HCOM-Setting-PrincipalOrgID
+      - Do not use - keep the default
+
+  HCOMS3LambdaBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: HCOM-Setting-Distribution-Bucket
+    Description: DO NOT MODIFY - pulling from Step 1 template
+    AllowedValues:
+      - HCOM-Setting-Distribution-Bucket
+      - Do not use - keep the default
+
+  HCOMOwnerTag:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: HCOM-Setting-OwnerTag
+    Description: DO NOT MODIFY - pulling from Step 1 template
+    AllowedValues:
+      - HCOM-Setting-OwnerTag
+      - Do not use - keep the default
+
+  CentralTenantName:
+    Type: String
+    Default: 'VDMS'
+    Description: Provide a Tenant name for the the primary AWS Account used for the central / management account where this will be deployed.
+  
+  CentralAcctName:
+    Type: String
+    Default: 'Mgmt'
+    Description: Provide a friendly name for the the primary AWS Account used for the central / management account where this will be deployed.
+
+  PlatformOpsAdminRole:
+    Type: String
+    Default: 'replacewithadminrole'
+    Description: Provide the AWS Role name for your PlatformOps Adminstrators. This role must already exist and be used by the person deploying this template. This role must include KMS permissions for the HCOM KMS key that will be created and used for HCOM. For Reserved SSO roles you may need to include everythinhg past the :role/ in the arn.
+
+  #GetHCOMVPC:
+  #  Type: String
+  #  Default: '10.250.0.0/16'
+  #  Description: This template will install a VPC, subnet, and security group to deploy all HCOM Lambda automations. Modify VPC network range if needed to ensure it does not conflict with any existing subnets.
+
+  #GetHCOMSubnet:
+  #  Type: String
+  #  Default: '10.250.50.0/24'
+  #  Description: This template will install a VPC, subnet, and security group to deploy all HCOM Lambda automations. Modify to ensure it does not conflict with any existing subnets.
+
+  S3ReportsFolder:
+    Type: String
+    Default: 'hcom-operations-reports-replacewithaccount'
+    Description: Replace with the Name for the S3 bucket to be created for Reports or accept the default. The Central Account number will automatically be concatenated to make it unique. This will also create a -log bucket for NIST 800-53 log compliance.
+
+  LoadDatabase:
+    Type: String
+    Default: "Already Loaded"
+    Description: Have you deployed the configuration database alread? If not, you need to select Load Database. You only need to load it once, otherwise you may overwrite changes. 
+    AllowedValues:
+      - "Already Loaded"
+      - "Load Database"
+
+  #DeploymentRegion:
+  #  Type: String
+  #  Default: Primary
+  #  Description: Are you deploying this template to the (Primary / Central) or Secondary region? The Primary region creates global objects that should not be recreated in secondary regions.
+  #  AllowedValues:
+  #    - Primary
+  #    - Secondary
+
+  LambdaArchitecture:
+    Type: List<String>
+    Default: x86_64
+    Description: Choose compute architecture for Lambda Fundtions. Note GovCloud currently only supports x86_64
+    AllowedValues:
+      - x86_64
+      - arm64
+
+  #DeploymentSubNet:
+  #  Type: List<AWS::EC2::Subnet::Id>
+  #  Description: Select the Subnet Id for the Lambda Functions
+
+
+  #DeploymentSecurityGroup:
+  #  Type: List<AWS::EC2::SecurityGroup::Id>
+  #  Description: Select the Security groups for the Lambda Functions
+  
+
+Conditions:
+  LoadDBOnce: !Equals
+    - !Ref LoadDatabase
+    - "Load Database"
+
+Resources:
+  HCOMOpsReportBucket:
+    Type: AWS::S3::Bucket
+    Description: Used to store PlatformOps reports
+    Properties:
+      BucketName: !Join [ "", [ !Ref S3ReportsFolder, '-', !Ref AWS::AccountId ] ]
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      #LoggingConfiguration:
+      #  DestinationBucketName: !Ref HCOMOpsLogBucket
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  #HCOMOpsLogBucket:
+  #  Type: AWS::S3::Bucket
+  ##  Description: Logs for report bucket
+  #  Properties:
+  #    BucketName: !Join [ "", [ !Ref S3ReportsFolder, '-', !Ref AWS::AccountId,'-logs' ] ]
+  #    BucketEncryption: 
+  #      ServerSideEncryptionConfiguration:
+  #        - ServerSideEncryptionByDefault:
+  #            SSEAlgorithm: AES256
+  #    PublicAccessBlockConfiguration:
+  #      BlockPublicAcls: true
+  #      IgnorePublicAcls: true
+  #      BlockPublicPolicy: true
+  #      RestrictPublicBuckets: true
+  #    AccessControl: LogDeliveryWrite
+  #    VersioningConfiguration:
+  #      Status: Enabled
+  #    OwnershipControls:
+  #      Rules:
+  #        - ObjectOwnership: BucketOwnerEnforced
+  #    Tags:
+  #      - Key: "Owner"
+  #        Value: !Ref OwnerTag
+
+  HCOMOpsReportBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket: !Ref HCOMOpsReportBucket
+      PolicyDocument: 
+        Version:  2012-10-17
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: "Allow"
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${HCOMOpsReportBucket}/*"
+            Principal:  "*"
+            Condition:
+              ForAnyValue:StringEquals:
+                  "aws:PrincipalOrgID": 
+                    !Ref PrincipalOrgID #Fn::ImportValue: !Sub "${HCOMPrimerStack}-PrincipalOrgID"
+
+  HCOMLambdaRole:
+    Type: AWS::IAM::Role
+    DependsOn: HCOMOpsReportBucket
+    Properties: 
+      RoleName: HCOM-Lambda-Automation
+      Description: For deployment to Central Management account (in a cross-account environment) for use by Lambda Automation
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - ssm.amazonaws.com
+                - events.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns: 
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMFullAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonSSMAutomationRole'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchFullAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaRole'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ReadOnlyAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonS3FullAccess'
+      Path: /
+      Policies: 
+        - PolicyName: HCOM-CrossAccount-Automation
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'backup:DescribeProtectedResource'
+                  - 'ses:SendEmail'
+                  - 'ses:SendRawEmail'
+                  - 'iam:CreateServiceLinkedRole'
+                  - 'ssm:AddTagsToResource'
+                  - 'ssm:SendCommand'
+                  - 'ssm:CreateAssociation'
+                  - 'ssm:UpdateAssociation'
+                  - 'ec2:CreateTags'
+                  - 'ec2:CreateNetworkInterface'
+                  - 'ec2:DeleteNetworkInterface'
+                  - 'ssm:GetCommandInvocation'
+                  - 'events:DescribeRule'
+                  - 'events:TagResource'
+                  - 'events:PutEvents'
+                  - 'events:PutRule'
+                  - 'events:DisableRule'
+                  - 'events:EnableRule'
+                  - 'events:PutTargets'
+                  - 'events:RemoveTargets'
+                  - 'iam:ListAttachedRolePolicies'
+                  - 'iam:GetInstanceProfile'
+                  - 'cloudwatch:GetMetricData'
+                  - 'cloudwatch:ListMetrics'
+                  - 'elasticfilesystem:DescribeTags'
+                  - 'elasticfilesystem:DescribeFileSystems'
+                  - 'cloudformation:CreateStack'
+                  - 'cloudformation:UpdateStack'
+                  - 'cloudformation:DescribeStacks'
+                  - 'cloudformation:ListStacks'
+                  - 'cloudformation:ListStackResources'
+                  - 'iam:PassRole'
+                  - 'kms:GenerateDataKey'
+                  - 'kms:Decrypt'
+                  - 'kms:DescribeKey'
+                  - 'kms:GetKeyPolicy'
+                  - 'kms:PutKeyPolicy'
+                  - 'resource-groups:*'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:TagResource'
+                  - 'dynamodb:UntagResource'
+                  - 'dynamodb:ListTagsOfResource'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:DeleteItem'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:Query'
+                  - 'dynamodb:UpdateItem'
+                  - 'dynamodb:CreateBackup'
+                  - 'dynamodb:ListTables'
+                  - 'sqs:*'
+                Resource: 
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:*:${AWS::AccountId}:table/*'
+                  - !Sub 'arn:${AWS::Partition}:sqs:*:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:Query'
+                Resource: 
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:*:${AWS::AccountId}:table/*/index/*'
+        - PolicyName: HCOM-Reports
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !GetAtt [HCOMOpsReportBucket, Arn]
+        - PolicyName: HCOM-CrossAccountAccessRole
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::*:role/HCOM-CrossAccount-Automation"
+        - PolicyName: HCOM-Invoke-Automation-Runbooks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ssm:StartAutomationExecution'
+                Resource: 
+                  - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::Region}:*:automation-definition/*"
+  
+  #HCOMPrimaryRegion:
+  #  Type: AWS::SSM::Parameter
+  #  Properties: 
+  #    DataType: text
+  #    Description: Primary Region for HCOM deployment
+  #    Name: HCOM-Primary-Region
+  #    Tier: Standard
+  #    Type: String
+  #    Value: !Ref CentralRegion
+
+  HCOMEventBus:
+    Type: AWS::Events::EventBus
+    Properties: 
+      Name: HCOM-Central-EB
+
+  EnableOrg:
+    Type: AWS::Events::EventBusPolicy
+    Properties: 
+      EventBusName: !Ref HCOMEventBus
+      StatementId: "HCOMOrg"
+      Statement:
+          Effect: "Allow"
+          Principal: "*"
+          Action: "events:PutEvents"
+          Resource: !GetAtt "HCOMEventBus.Arn"
+          Condition:
+              StringEquals:
+                  "aws:PrincipalOrgID": 
+                    !Ref PrincipalOrgID
+  #### Reserve section for more secure environments that require Lambdas deployed within VPC
+  #HCOMVPC:
+  #  Type: AWS::EC2::VPC
+  #  Properties: 
+  #      CidrBlock: !Ref GetHCOMVPC 
+  #      EnableDnsHostnames: true
+  #      EnableDnsSupport: true
+  #      Tags: 
+  #      - Key: Name
+  #        Value: HCOM-VPC
+  #      - Key: Owner
+  #        Value: tom.moore@gdit.com
+
+  #HCOMPrvRteTbl:
+  #  Type: AWS::EC2::RouteTable
+  #  Properties:
+  #    VpcId: !Ref HCOMVPC
+  #    Tags:
+  #    - Key: Name
+  #      Value: HCOM-Private-1
+
+
+  #HCOMSubNet:
+  #  Type: AWS::EC2::Subnet
+  #  Properties:
+  #    VpcId: !Ref HCOMVPC
+  #    CidrBlock: !Ref GetHCOMSubnet 
+  #    AvailabilityZone: !Select [0, !GetAZs ]
+  #    Tags:
+  #    - Key: Name
+  #      Value: HCOM-Private-1
+
+  #HCOMEIP:
+  #  Type: AWS::EC2::EIP
+  #  Properties:
+  #    Domain: VPC
+  
+  #HCOMNATG:
+  #  Type: AWS::EC2::NatGateway
+  #  Properties:
+  #    AllocationId: !GetAtt HCOMEIP.AllocationId
+  #    SubnetId: !Ref HCOMSubNet
+  #    Tags:
+  #    - Key: Name
+  #      Value: HCOM-NAT
+
+  #HCOMPrvRte:
+  #  Type: AWS::EC2::Route
+  #  Properties:
+  #    RouteTableId: !Ref HCOMPrvRteTbl
+  #    DestinationCidrBlock: 0.0.0.0/0
+  #    NatGatewayId: !Ref HCOMNATG
+
+  #HCOMSecurityGroup:
+  #  Type: AWS::EC2::SecurityGroup
+  #  Properties: 
+  #    GroupDescription: For HCOM Lambdas
+  #    GroupName: HCOM-SG
+  #    SecurityGroupIngress: 
+  #      - IpProtocol: icmp
+  #        FromPort: 8
+  #        ToPort: -1
+  #        CidrIp: !Ref GetHCOMSubnet
+  #    Tags: 
+  #      - Key: Name
+  #        Value: HCOM-SG
+  #      - Key: Owner
+  #        Value: tom.moore@gdit.com
+  #    VpcId: !Ref HCOMVPC
+
+
+  MarkdownLambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties: 
+      CompatibleRuntimes: 
+        - python3.11
+        - python3.10
+        - python3.9
+        - python3.8
+      Content:
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/markdown-layer.zip
+      Description: Convert Markdown to HTML for platform documation in CloudWatch Configuration Management Dashboard
+      LayerName: markdown
+      LicenseInfo: BSD-3-Clause
+  
+
+  HCOMLambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties: 
+      CompatibleRuntimes: 
+        - python3.11
+        - python3.10
+        - python3.9
+        - python3.8
+      Content:
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/hcom.zip
+      Description: Provides all core libraries for GDIT Hybric Cloud Operations Manager (HCOM)
+      LayerName: hcom
+      LicenseInfo: MIT
+
+  CWAlarmTesterLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-CloudWatch-Alarm-Testing-Tool
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 3
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/CloudWatch-Alarm-Testing-Tool.zip
+      Description: Toggle Alarm State for testing event-driven automations
+      #VpcConfig:
+      #  SubnetIds: 
+      #    - !Ref HCOMSubNet
+      #  SecurityGroupIds: 
+      #    - !Ref HCOMSecurityGroup
+      Layers:
+        - !Ref HCOMLambdaLayer
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+  
+  CWAlarmTesterLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${CWAlarmTesterLambda}
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+  
+  CloudWatchLifecycleLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-Lifecycle-Automation
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 600
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/Lifecycle-Automation.zip
+      Description: Event-driven platform for automating EC2 alarm,state,patch,backup lifecycle management
+      DeadLetterConfig: 
+        TargetArn:  !GetAtt PlatformAutomationSQSDLQ.Arn
+      #VpcConfig:
+      #  SubnetIds: 
+      #    - !Ref HCOMSubNet
+      #  SecurityGroupIds: 
+      #    - !Ref HCOMSecurityGroup
+      Layers:
+        - !Ref HCOMLambdaLayer
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  #CloudWatchLifecycleLambdaPermission:
+  #  Type: AWS::Lambda::Permission
+  #  Properties:
+  #    FunctionName: !GetAtt CloudWatchLifecycleLambda.Arn
+  #    Action: lambda:InvokeFunction
+  #    Principal: !Sub ${AWS::AccountId}
+  #    PrincipalOrgID: !Ref PrincipalOrgID
+
+  CloudWatchLifecycleLambdaPermission2:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CloudWatchLifecycleLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+
+  AWSBackupAuditLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-AWS-Backup-Audit
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 191
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/AWS-Backup-Audit.zip
+      Description: Triggered by backup job state changes and daily audit reports - emails and stores report
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  AWSBackupAuditLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt AWSBackupAuditLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  CloudWatchAlarmResponseLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-CloudWatch-Alarm-Response
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 120
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/CloudWatch-Alarm-Response.zip
+      Description: Is invoked by EventBridge rules based on CloudWatch alarm events to take action in response
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchAlarmResponseLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${CloudWatchAlarmResponseLambda}
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchAlarmResponseLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CloudWatchAlarmResponseLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+  
+  
+  EC2AuditLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-EC2-Detail-Report
+      Runtime: python3.11
+      Timeout: 600
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/EC2-Detail-Report.zip
+      Description: emails an EC2 Count for all tenants and stores a detailed EC2 report in S3
+      Layers:
+        - !Ref HCOMLambdaLayer
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  EC2AuditLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt EC2AuditLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  EC2AuditLambdaPermission2:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt EC2AuditLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Sub ${AWS::AccountId}
+      PrincipalOrgID: 
+        !Ref PrincipalOrgID
+  
+  CloudWatchAlarmAuditLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-CloudWatch-Alarm-Audit
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 450
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/CloudWatch-Alarm-Audit.zip
+      Description: Review and triage CloudWatch Agent Alarms and Insufficient Data
+      Layers:
+        - !Ref HCOMLambdaLayer
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchAlarmAuditLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CloudWatchAlarmAuditLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  CloudWatchAlarmAuditLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${CloudWatchAlarmAuditLambda}
+      KmsKeyId: !GetAtt [HCOMKey, Arn]
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchCustomMetricRunnerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-CloudWatch-Custom-Metric-Runner
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 10
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/CloudWatch-Custom-Metric-Runner.zip
+      Description: Invoke Run Documents in tenants to push CW custom metrics
+      Layers:
+        - !Ref HCOMLambdaLayer
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchCustomMetricRunnerLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${CloudWatchCustomMetricRunnerLambda}
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchCustomMetricRunnerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CloudWatchCustomMetricRunnerLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  EC2StoppedEBRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "EC2 stopped - disable alarm actions"
+        EventBusName: !Ref HCOMEventBus
+        EventPattern:
+          source:  
+            - "aws.ec2"
+          detail-type: 
+            - "EC2 Instance State-change Notification"
+          detail:
+            state: 
+              - "stopping"
+        Name: "HCOM-EC2-Stopped-State"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: !GetAtt [PlatformAutomationQueue, Arn]
+            Id: Target1
+            InputTransformer:
+              InputPathsMap:
+                "account": "$.account"
+                "instance": "$.detail.instance-id"
+                "region": "$.region"
+              InputTemplate: |
+                {
+                  "account": <account>,
+                  "instance": <instance>,
+                  "region": <region>,
+                  "mode": 4,
+                  "resource": "ec2",
+                  "reboot": "no",
+                  "Function": "cw_lifecycle",
+                  "skipconfig": 0
+                }
+            DeadLetterConfig:
+              Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+  EC2RunningEBRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "EC2 running - create or enable alarm actions"
+        EventBusName: !Ref HCOMEventBus
+        EventPattern:
+          source:  
+            - "aws.ec2"
+          detail-type: 
+            - "EC2 Instance State-change Notification"
+          detail:
+            state: 
+              - "running"
+        Name: "HCOM-EC2-Running-State"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: !GetAtt [PlatformAutomationQueue, Arn]
+            Id: Target1
+            InputTransformer:
+              InputPathsMap:
+                "account": "$.account"
+                "instance": "$.detail.instance-id"
+                "region": "$.region"
+              InputTemplate: |
+                {
+                  "account": <account>,
+                  "instance": <instance>,
+                  "region": <region>,
+                  "reboot": "no",
+                  "resource": "ec2",
+                  "mode": 1,
+                  "Function": "cw_lifecycle",
+                  "skipconfig": 0
+                }
+            DeadLetterConfig:
+              Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+  EC2RebootedEBRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "EC2 rebooted - create or enable alarm actions"
+        EventBusName: !Ref HCOMEventBus
+        EventPattern:
+          source:  
+            - "aws.ec2"
+          detail-type: 
+            - "AWS API Call via CloudTrail"
+          detail:
+            eventSource: 
+              - "ec2.amazonaws.com"
+            eventName:
+              - "RebootInstances"
+        Name: "HCOM-EC2-Reboot"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Id: Target1
+            Arn: !GetAtt [PlatformAutomationQueue, Arn]
+            InputTransformer:
+              InputPathsMap:
+                "account": "$.account"
+                "instance": "$.detail.requestParameters.instancesSet.items[0].instanceId"
+                "region": "$.region"
+              InputTemplate: |
+                {
+                  "account": <account>,
+                  "instance": <instance>,
+                  "region": <region>,
+                  "reboot": "yes",
+                  "resource": "ec2",
+                  "mode": 1,
+                  "Function": "cw_lifecycle",
+                  "skipconfig": 0
+                }
+            DeadLetterConfig:
+              Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+
+  EC2TerminatedEBRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "EC2 terminated - delete alarms"
+        EventBusName: !Ref HCOMEventBus
+        EventPattern:
+          source:  
+            - "aws.ec2"
+          detail-type: 
+            - "EC2 Instance State-change Notification"
+          detail:
+            state: 
+              - "terminated"
+        Name: "HCOM-EC2-Terminated-State"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: !GetAtt [PlatformAutomationQueue, Arn]
+            Id: Target1
+            InputTransformer:
+              InputPathsMap:
+                "account": "$.account"
+                "instance": "$.detail.instance-id"
+                "region": "$.region"
+              InputTemplate: |
+                {
+                  "account": <account>,
+                  "instance": <instance>,
+                  "region": <region>,
+                  "resource": "ec2",
+                  "mode": 5,
+                  "reboot": "no",
+                  "Function": "cw_lifecycle",
+                  "skipconfig": 0
+                }
+            DeadLetterConfig:
+              Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+  BackupJobFailedEBRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "AWS Backup job failed or expired"
+        EventBusName: !Ref HCOMEventBus
+        EventPattern:
+          source:  
+            - "aws.backup"
+          detail-type: 
+            - "Backup Job State Change"
+          detail:
+            state: 
+              - "FAILED"
+              - "EXPIRED"
+        Name: "HCOM-Backup-Job-State-Change"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: !GetAtt [AWSBackupAuditLambda, Arn]
+            Id: Target1
+            InputTransformer:
+              InputPathsMap:
+                "account": "$.account"
+                "job": "$.detail.backupJobId"
+                "region": "$.region"
+                "resourcearn": "$.detail.resourceArn"
+                "resourcetype": "$.detail.resourceType"
+                "state": "$.detail.state"
+                "statusMessage": "$.detail.statusMessage"
+              InputTemplate: |
+                {
+                  "account": <account>,
+                  "job": <job>,
+                  "region": <region>,
+                  "resourcetype": <resourcetype>,
+                  "resourcearn": <resourcearn>,
+                  "state": <state>,
+                  "statusMessage": <statusMessage>,
+                  "mode": 1
+                }
+            DeadLetterConfig:
+              Arn: !GetAtt DeadLetterQueue.Arn
+
+  RestoreJobFailedEBRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "AWS Restore job failed or completed"
+        EventBusName: !Ref HCOMEventBus
+        EventPattern:
+          source:  
+            - "aws.backup"
+          detail-type: 
+            - "Restore Job State Change"
+          detail:
+            state: 
+              - "FAILED"
+              - "COMPLETED"
+        Name: "HCOM-Restore-Job-Status"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: !GetAtt [AWSBackupAuditLambda, Arn]
+            Id: Target1
+            InputTransformer:
+              InputPathsMap:
+                "account": "$.account"
+                "job": "$.detail.restoreJobId"
+                "region": "$.region"
+                "resourcearn": "$.resources"
+                "resourcetype": "$.detail.resourceType"
+                "state": "$.detail.status"
+                "statusMessage": "$.detail.statusMessage"
+              InputTemplate: |
+                {
+                  "account": <account>,
+                  "job": <job>,
+                  "region": <region>,
+                  "resourcetype": <resourcetype>,
+                  "resourcearn": <resourcearn>,
+                  "state": <state>,
+                  "statusMessage": <statusMessage>,
+                  "mode": 2
+                }
+            DeadLetterConfig:
+              Arn: !GetAtt DeadLetterQueue.Arn
+              
+  DailyCWAuditReportsEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Run the Daily Audit Reports (CloudWatch & AWS Backup)"
+      Name: "HCOM-Run-Daily-Audit-Reports"
+      EventBusName: "default"
+      State: "ENABLED"
+      ScheduleExpression: "cron(00 12 * * ? *)"
+      Targets: 
+        - 
+          Arn: !GetAtt [CloudWatchAlarmAuditLambda, Arn]
+          Id: Target1
+          Input: '{
+            "mode": 1,
+            "resetcount": "yes"
+            }'
+          DeadLetterConfig:
+              Arn: !GetAtt DeadLetterQueue.Arn
+        -
+          Arn: !GetAtt [AWSBackupAuditLambda, Arn]
+          Id: Target2
+          Input: '{
+            "mode": 4
+            }'
+          DeadLetterConfig:
+              Arn: !GetAtt DeadLetterQueue.Arn
+        -
+          Arn: !GetAtt [EC2AuditLambda, Arn]
+          Id: Target3
+          DeadLetterConfig:
+              Arn: !GetAtt DeadLetterQueue.Arn
+
+  FixLinuxCWAgentEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Restart CloudWatch Agent"
+      Name: "HCOM-Restart-CloudWatch-Agent-Linux"
+      EventBusName: "default"
+      State: "DISABLED"
+      EventPattern:
+          source:  
+            - "aws.cloudwatch"
+          detail-type: 
+            - "CloudWatch Alarm State Change"
+          detail:
+            state:
+              value:
+                - "ALARM"
+            configuration:
+              metrics:
+                metricStat:
+                  metric:
+                    namespace:
+                      - "CWAgent"
+                    name:
+                      - "procstat_lookup_pid_count"
+                    dimension:
+                      - "amazon-cloudwatch-agent"
+      Targets: 
+        - 
+          Arn: !GetAtt [CloudWatchAlarmResponseLambda, Arn]
+          Id: Target1
+          InputTransformer:
+            InputPathsMap:
+              "alarmname": "$.detail.alarmName"
+              "instance": "$.detail.configuration.metrics[0].metricStat.metric.dimensions.InstanceId"
+            InputTemplate: '{"alarmname": <alarmname>,"instance": <instance>,"mode": 1}'
+          DeadLetterConfig:
+              Arn: !GetAtt DeadLetterQueue.Arn
+
+  FixWindowsCWAgentEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Restart CloudWatch Agent"
+      Name: "HCOM-Restart-CloudWatch-Agent-Windows"
+      EventBusName: "default"
+      State: "DISABLED"
+      EventPattern:
+          source:  
+            - "aws.cloudwatch"
+          detail-type: 
+            - "CloudWatch Alarm State Change"
+          detail:
+            state:
+              value:
+                - "ALARM"
+            configuration:
+              metrics:
+                metricStat:
+                  metric:
+                    namespace:
+                      - "CWAgent"
+                    name:
+                      - "procstat_lookup pid_count"
+                    dimension:
+                      - "amazon-cloudwatch-agent"
+      Targets: 
+        - 
+          Arn: !GetAtt [CloudWatchAlarmResponseLambda, Arn]
+          Id: Target1
+          InputTransformer:
+            InputPathsMap:
+              "alarmname": "$.detail.alarmName"
+              "instance": "$.detail.configuration.metrics[0].metricStat.metric.dimensions.InstanceId"
+            InputTemplate: '{"alarmname": <alarmname>,"instance": <instance>,"mode": 1}'
+          DeadLetterConfig:
+              Arn: !GetAtt DeadLetterQueue.Arn
+
+  CustomMetricRunnerTriggerEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Invoke the Custom Metric Runner"
+      Name: "HCOM-Invoke-Custom-Metric-Runner"
+      EventBusName: "default"
+      State: "DISABLED"
+      ScheduleExpression: "cron(00 12 * * ? *)"
+      Targets: 
+        - 
+          Arn: !GetAtt [CloudWatchCustomMetricRunnerLambda, Arn]
+          Id: Target1
+          Input: '{
+            "mode": 1,
+            "doc": "HCOM-CloudWatch-Push-Custom-Metric",
+            "key": "tag:CW_Profile",
+            "value": "1,2",
+            "tenant": "1",
+            "account": "replace with target aws account number",
+            "name": "replace with target tenant name",
+            "metricname": "name for metric",
+            "metricpath": "/etc/amazon/ssm/custom-metric-status.txt",
+            "metricnamespace": "Custom"
+            }'
+          DeadLetterConfig:
+              Arn: !GetAtt DeadLetterQueue.Arn
+        -
+          Arn: !GetAtt [CloudWatchCustomMetricRunnerLambda, Arn]
+          Id: Target2
+          Input: '{
+            "mode": 1,
+            "doc": "HCOM-CloudWatch-Push-Custom-Metric",
+            "key": "tag:CW_Profile",
+            "value": "31,32",
+            "tenant": "1",
+            "account": "replace with target aws account number",
+            "name": "replace with target tenant name",
+            "metricname": "name for metric",
+            "metricpath": "/etc/amazon/ssm/custom-metric-status.txt",
+            "metricnamespace": "Custom"
+            }' 
+          DeadLetterConfig:
+            Arn: !GetAtt DeadLetterQueue.Arn
+
+
+  TenantHelpDeskSNS:
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: !Sub "HCOM-${CentralTenantName}-${CentralAcctName}-Help-Desk"
+      KmsMasterKeyId: !GetAtt [HCOMKey, KeyId]
+      Subscription:
+        - Endpoint: !Ref HCOMOwnerTag
+          Protocol: "email"
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+
+  TenantGeneralSNS:
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: !Sub "HCOM-${CentralTenantName}-${CentralAcctName}-General"
+      KmsMasterKeyId: !GetAtt [HCOMKey, KeyId]
+      Subscription:
+        - Endpoint: !Ref HCOMOwnerTag
+          Protocol: "email"
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CentralPlatformSNS:
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: "HCOM-Central-Alerts"
+      KmsMasterKeyId: !GetAtt [HCOMKey, KeyId]
+      Subscription:
+        - Endpoint: !Ref HCOMOwnerTag
+          Protocol: "email"
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CentralPlatformAutomationSNS:
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: "HCOM-Central-Automations"
+      KmsMasterKeyId: !GetAtt [HCOMKey, KeyId]
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  # add subscription and filter. message must contain AlarmName
+  #{"AlarmName": [{"exists": true}]}
+  CentralPlatformSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt [PlatformAutomationQueue, Arn]
+      Protocol: sqs
+      TopicArn: !Ref CentralPlatformAutomationSNS
+      # FilterPolicyScope: MessageBody
+      # FilterPolicy: | 
+      #   {"NewStateValue": ["ALARM","OK"],"OldStateValue": [ {"anything-but": ["INSUFFICIENT_DATA"]}]}
+      RedrivePolicy: !Sub | 
+        {"deadLetterTargetArn": "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:${PlatformAutomationSQSDLQ}"}
+
+
+  # Operations Statistics (Ops Stats) Dashboard
+  HCOMOpsDashboard:  
+    Type: AWS::CloudWatch::Dashboard
+    Properties: 
+      DashboardName: HCOM-Operations-Dashboard
+      DashboardBody: !Sub |
+        {
+                "widgets": [
+                    {
+                  "height": 7,
+                  "width": 9,
+                  "y": 0,
+                  "x": 0,
+                  "type": "custom",
+                  "properties": {
+                      "endpoint": "${CloudWatchDashboardWidgetsLambda.Arn}",
+                      "updateOn": {
+                          "refresh": true,
+                          "resize": true,
+                          "timeRange": false
+                      },
+                      "params": {
+                          "widget": 8
+                      },
+                      "title": "Hybrid Cloud Operations Manager (HCOM)"
+                  }
+              },
+              {
+                  "height": 7,
+                  "width": 14,
+                  "y": 0,
+                  "x": 9,
+                  "type": "custom",
+                  "properties": {
+                      "endpoint": "${CloudWatchDashboardWidgetsLambda.Arn}",
+                      "updateOn": {
+                          "refresh": true,
+                          "resize": true,
+                          "timeRange": false
+                      },
+                      "params": {
+                          "widget": 2,
+                          "mode": 0,
+                          "tenant": "${CentralTenantName}"
+                      },
+                      "title": "Daily Workload Events detected and impact on CloudWatch Alarms (updates at 8 am daily). Updates may take a few minutes."
+                  }
+              },
+              {
+                  "height": 11,
+                  "width": 23,
+                  "y": 7,
+                  "x": 0,
+                  "type": "custom",
+                  "properties": {
+                      "endpoint": "${CloudWatchDashboardWidgetsLambda.Arn}",
+                      "updateOn": {
+                          "refresh": true,
+                          "resize": true,
+                          "timeRange": false
+                      },
+                      "params": {
+                          "widget": 3,
+                          "mode": 0,
+                          "Tenant": "${CentralTenantName}",
+                          "Account": "${AWS::AccountId}"
+                      },
+                      "title": "Ops Stats for Selected Tenant"
+                  }
+              }
+          ]
+        }
+
+  # Configuration Management Dashboard
+  HCOMPlatformConfigurationDashboard:  
+    Type: AWS::CloudWatch::Dashboard
+    Properties: 
+      DashboardName: HCOM-Platform-Configuration-Manager
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+              {
+                  "height": 14,
+                  "width": 23,
+                  "y": 29,
+                  "x": 0,
+                  "type": "custom",
+                  "properties": {
+                      "endpoint": "${CloudWatchDashboardWidgetsLambda.Arn}",
+                      "updateOn": {
+                          "refresh": false,
+                          "resize": true,
+                          "timeRange": false
+                      },
+                      "params": {
+                          "Account": "${AWS::AccountId}",
+                          "Tenant": "${CentralTenantName}",
+                          "widget": 4,
+                          "mode": 2,
+                          "Profile": 1,
+                          "profiletype": "state-profile"
+                      },
+                      "title": "State Profiles (when enabled create SSM State Manager Associations to enforce configuration state)."
+                  }
+              },
+              {
+                  "height": 8,
+                  "width": 9,
+                  "y": 0,
+                  "x": 0,
+                  "type": "custom",
+                  "properties": {
+                      "endpoint": "${CloudWatchDashboardWidgetsLambda.Arn}",
+                      "updateOn": {
+                          "refresh": false,
+                          "resize": false,
+                          "timeRange": false
+                      },
+                      "params": {
+                          "widget": 4,
+                          "mode": 5,
+                          "Tenant": "${CentralTenantName}"
+                      },
+                      "title": "Tenant Management"
+                  }
+              },
+              {
+                  "height": 8,
+                  "width": 14,
+                  "y": 0,
+                  "x": 9,
+                  "type": "custom",
+                  "properties": {
+                      "endpoint": "${CloudWatchDashboardWidgetsLambda.Arn}",
+                      "updateOn": {
+                          "refresh": false,
+                          "resize": true,
+                          "timeRange": false
+                      },
+                      "params": {
+                          "widget": 6,
+                          "mode": 1,
+                          "docs": "index.md"
+                      },
+                      "title": "Hive HCOM Platform User Guide"
+                  }
+              },
+              {
+                  "height": 20,
+                  "width": 24,
+                  "y": 43,
+                  "x": 0,
+                  "type": "custom",
+                  "properties": {
+                      "endpoint": "${CloudWatchDashboardWidgetsLambda.Arn}",
+                      "updateOn": {
+                          "refresh": false,
+                          "resize": true,
+                          "timeRange": false
+                      },
+                      "params": {
+                          "Account": "${AWS::AccountId}",
+                          "Tenant": "${CentralTenantName}",
+                          "widget": 4,
+                          "mode": 3,
+                          "Profile": 1,
+                          "resourcetype": "cw-profile"
+                      },
+                      "title": "CloudWatch Profiles (are reusable collections of what to monitor and what actions to take)."
+                  }
+              },
+              {
+                  "height": 21,
+                  "width": 23,
+                  "y": 8,
+                  "x": 0,
+                  "type": "custom",
+                  "properties": {
+                      "endpoint": "${CloudWatchDashboardWidgetsLambda.Arn}",
+                      "updateOn": {
+                          "refresh": false,
+                          "resize": true,
+                          "timeRange": false
+                      },
+                      "params": {
+                          "Account": "${AWS::AccountId}",
+                          "Tenant": "${CentralTenantName}",
+                          "widget": 4,
+                          "mode": 8
+                      },
+                      "title": "AWS Account Management"
+                  }
+              }
+          ]
+        }
+
+  HCOMKey:
+    Type: AWS::KMS::Key
+    Properties: 
+      Description: Key used by Ops Automation Platform
+      Enabled: true
+      EnableKeyRotation: true
+      KeyPolicy: !Sub | 
+        {
+          "Version": "2012-10-17",
+          "Id": "key-consolepolicy-3",
+          "Statement": [{
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+              },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "Allow Service use of the key",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "events.amazonaws.com",
+                  "cloudwatch.amazonaws.com",
+                  "backup.amazonaws.com",
+                  "sns.amazonaws.com",
+                  "logs.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "kms:Encrypt",
+                "kms:Decrypt",
+                "kms:ReEncrypt*",
+                "kms:GenerateDataKey*",
+                "kms:DescribeKey"
+              ],
+              "Resource": "*"
+            },
+
+            {
+              "Sid": "Allow use of the key by cross-accounts",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": [
+                  "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                ]
+              },
+              "Action": [
+                "kms:Encrypt",
+                "kms:Decrypt",
+                "kms:ReEncrypt*",
+                "kms:GenerateDataKey*",
+                "kms:DescribeKey",
+                "kms:CreateGrant",
+                "kms:GetKeyRotationStatus",
+                "kms:GetPublicKey",
+                "kms:ListGrants",
+                "kms:RetireGrant",
+                "kms:RevokeGrant",
+                "kms:Sign",
+                "kms:Verify"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:PrincipalOrgID": "${PrincipalOrgID}"
+                }
+              }
+            },
+            {
+              "Sid": "Allow access for Key Administrators",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${PlatformOpsAdminRole}"
+              },
+              "Action": [
+                "kms:Create*",
+                "kms:Describe*",
+                "kms:Enable*",
+                "kms:List*",
+                "kms:Put*",
+                "kms:Update*",
+                "kms:Revoke*",
+                "kms:Disable*",
+                "kms:Get*",
+                "kms:Delete*",
+                "kms:TagResource",
+                "kms:UntagResource",
+                "kms:ScheduleKeyDeletion",
+                "kms:CancelKeyDeletion",
+                "kms:ReplicateKey",
+                "kms:UpdatePrimaryRegion"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "Allow use of the key",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${PlatformOpsAdminRole}"
+              },
+              "Action": [
+                "kms:Encrypt",
+                "kms:Decrypt",
+                "kms:ReEncrypt*",
+                "kms:GenerateDataKey*",
+                "kms:DescribeKey"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:PrincipalOrgID": "${PrincipalOrgID}"
+                }
+              }
+            }, {
+              "Sid": "Allow attachment of persistent resources",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${PlatformOpsAdminRole}"
+              },
+              "Action": [
+                "kms:CreateGrant",
+                "kms:ListGrants",
+                "kms:RevokeGrant"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Bool": {
+                  "kms:GrantIsForAWSResource": "true"
+                }
+              }
+            }
+          ]
+        }
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      MultiRegion: true
+      PendingWindowInDays: 30
+      Tags: 
+        - Key: Owner
+          Value: !Ref HCOMOwnerTag
+
+  HCOMKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/HCOM-Key
+      TargetKeyId: !Ref HCOMKey
+
+
+  CloudWatchCustomMetricProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-CloudWatch-Custom-Metric-Processor
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/CloudWatch-Custom-Metric-Processor.zip
+      Description: On state change, updates log for dashboard widget
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchCustomMetricProcessorLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${CloudWatchCustomMetricProcessorLambda}
+      KmsKeyId: !GetAtt [HCOMKey, Arn]
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchCustomMetricProcessorLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CloudWatchCustomMetricProcessorLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+   
+  CloudWatchDashboardWidgetsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-CloudWatch-Dashboard-Widgets
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/CloudWatch-Dashboard-Widgets.zip
+      Description: Populates custom Dashboard widgets
+      #VpcConfig:
+      #  SubnetIds: 
+      #    - !Ref HCOMSubNet
+      #  SecurityGroupIds: 
+      #    - !Ref HCOMSecurityGroup
+      Layers:
+        - !Ref HCOMLambdaLayer
+        - !Ref MarkdownLambdaLayer
+      Tags:
+            - Key: "Owner"
+              Value: !Ref HCOMOwnerTag
+
+  CloudWatchDashboardWidgetsLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${CloudWatchDashboardWidgetsLambda}
+      KmsKeyId: !GetAtt [HCOMKey, Arn]
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchDashboardWidgetsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CloudWatchDashboardWidgetsLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Sub ${AWS::AccountId}
+      PrincipalOrgID: 
+        !Ref PrincipalOrgID
+
+  CWCustomMetricStateChangeEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Custom Metric State Change"
+      Name: "HCOM-CloudWatch-Custom-Metric-State-Change"
+      EventBusName: "default"
+      State: "ENABLED"
+      EventPattern:
+          source:  
+            - "aws.cloudwatch"
+          detail-type: 
+            - "CloudWatch Alarm State Change"
+          detail:
+            state:
+              value:
+                - "ALARM"
+                - "OK"
+            configuration:
+              metrics:
+                metricStat:
+                  metric:
+                    namespace:
+                      - "Custom"
+      Targets: 
+        - 
+          Arn: !GetAtt [CloudWatchCustomMetricProcessorLambda, Arn]
+          Id: Target1
+          InputTransformer:
+            InputPathsMap:
+              "alarmname": "$.detail.alarmName"
+              "instance": "$.detail.configuration.metrics[0].metricStat.metric.dimensions.Instance"
+              "current": "$.detail.state.value"
+              "metricname": "$.detail.configuration.metrics[0].metricStat.metric.name"
+              "namespace": "$.detail.configuration.metrics[0].metricStat.metric.namespace"
+              "previous": "$.detail.previousState.value"
+              "region": "$.region"
+            InputTemplate: '{
+              "alarmname": <alarmname>,
+              "instance": <instance>,
+              "region": <region>,
+              "current": <current>,
+              "previous": <previous>,
+              "metricname": <metricname>,
+              "namespace": <namespace>,
+  	          "mode": 1
+              }'
+          DeadLetterConfig:
+            Arn: !GetAtt DeadLetterQueue.Arn
+
+  ## main automation queue: alarm response, alarm lifecycle autoamtions
+  PlatformAutomationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: HCOM-PlatformAutomation
+      #ContentBasedDeduplication: true
+      #DeduplicationScope: messageGroup
+      MessageRetentionPeriod: 3600
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PlatformAutomationSQSDLQ.Arn
+        maxReceiveCount: 100
+      KmsMasterKeyId: !Ref HCOMKey
+      Tags:
+            - Key: "Owner"
+              Value: !Ref HCOMOwnerTag
+  
+  # policy for main automation queue
+  PlatfomrAutomationQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          -
+            Action:
+              - "SQS:SendMessage"
+              - "SQS:ReceiveMessage"
+              - "SQS:GetQueueAttributes"
+              - "SQS:DeleteMessage"
+              - "SQS:GetQueueUrl"
+            Effect: "Allow"
+            Resource: !GetAtt PlatformAutomationQueue.Arn
+            Principal:
+              AWS:
+                - !Ref AWS::AccountId
+          -
+            Action:
+              - "SQS:StartMessageMoveTask"
+              - "SQS:CancelMessageMoveTask"
+              - "SQS:ListMessageMoveTasks"
+              - "SQS:ReceiveMessage"
+              - "SQS:GetQueueAttributes"
+              - "SQS:DeleteMessage"
+              - "SQS:GetQueueUrl"
+            Effect: "Allow"
+            Resource: !GetAtt PlatformAutomationSQSDLQ.Arn
+            Principal:
+              AWS:
+                - !Ref AWS::AccountId
+          -
+            Sid: "HCOM Allow SNS to send to this queue"
+            Action:
+              - "SQS:SendMessage"
+            Effect: "Allow"
+            Resource: !GetAtt PlatformAutomationQueue.Arn
+            Principal: 
+              Service:
+                - "sns.amazonaws.com"
+            Condition:
+              ArnEquals:
+                  "aws:SourceArn": !Ref CentralPlatformAutomationSNS
+          -
+            Sid: "HCOM Allow Events to send to this queue"
+            Action:
+              - "SQS:SendMessage"
+            Effect: "Allow"
+            Resource: !GetAtt PlatformAutomationQueue.Arn
+            Principal: 
+              Service:
+                - "events.amazonaws.com"
+      Queues:
+        - !Ref PlatformAutomationQueue
+  
+  # DLQ for main automation queue
+  PlatformAutomationSQSDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: HCOM-PlatformAutomationDLQ
+      KmsMasterKeyId: !Ref HCOMKey
+      Tags:
+            - Key: "Owner"
+              Value: !Ref HCOMOwnerTag
+
+  # created for EventBridge Rules that fail
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: HCOM-EB-DeadLetterQueue
+      KmsMasterKeyId: !Ref HCOMKey
+      Tags:
+            - Key: "Owner"
+              Value: !Ref HCOMOwnerTag
+
+  DeadLetterQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          -
+            Action:
+              - "SQS:SendMessage"
+              - "SQS:ReceiveMessage"
+              - "SQS:GetQueueAttributes"
+              - "SQS:DeleteMessage"
+              - "SQS:GetQueueUrl"
+            Effect: "Allow"
+            Resource: !GetAtt DeadLetterQueue.Arn
+            Principal:
+              AWS:
+                - !Ref AWS::AccountId
+          -
+            Sid: "HCOM"
+            Action:
+              - "SQS:SendMessage"
+            Effect: "Allow"
+            Resource: !GetAtt DeadLetterQueue.Arn
+            Principal: 
+              Service:
+                - "events.amazonaws.com"
+      Queues:
+        - !Ref DeadLetterQueue
+
+  HCOMSQSProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-SQS-Processor
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/SQS-Processor.zip
+      Description: Triggered by EC2 state change SQS items for processing
+      DeadLetterConfig: 
+        TargetArn:  !GetAtt PlatformAutomationSQSDLQ.Arn
+      Layers:
+        - !Ref HCOMLambdaLayer
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  HCOMSQSProcessorLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${HCOMSQSProcessorLambda}
+      KmsKeyId: !GetAtt [HCOMKey, Arn]
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  HCOMSQSProcessorLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt HCOMSQSProcessorLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: sqs.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  SQSLambdaMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      ScalingConfig:
+        MaximumConcurrency: 50
+      Enabled: true 
+      EventSourceArn: !GetAtt PlatformAutomationQueue.Arn
+      FunctionName: !GetAtt HCOMSQSProcessorLambda.Arn
+
+  #DevMaintenanceWindows:
+  #  Type: AWS::SSM::MaintenanceWindow
+  #  Properties: 
+  #    AllowUnassociatedTargets: true
+  #    Cutoff: 1
+  #    Description: Development system maintenance
+  #    Duration: 2
+  #    Name: Central-Development
+  #    Schedule: cron(0 30 23 ? * TUE#2 *)
+  #    ScheduleTimezone: US/Eastern
+  #    Tags: 
+  #      - Key: "Owner"
+  #        Value: !Ref OwnerTag
+  
+  #DevMaintenanceWindowsTargets:
+  #  Type: AWS::SSM::MaintenanceWindowTarget
+  ##  Properties: 
+  #    Description: Development system maintenance
+  #    Name: Central-Development
+  #    OwnerInformation: tom.moore@gdit.com
+  #    ResourceType: INSTANCE
+  #    Targets: 
+  #    - Key: tag:Environment
+  #      Values:
+  #      - DEV
+  #    WindowId: !Ref DevMaintenanceWindows
+
+  PlatformConfigMgmtLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: HCOM-Platform-Configuration-Manager
+      Architectures: !Ref LambdaArchitecture
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128 
+      Role: !GetAtt [HCOMLambdaRole, Arn]
+      Handler: index.lambda_handler
+      Code: 
+        S3Bucket: !Ref HCOMS3LambdaBucket
+        S3Key: lambdas/Platform-Configuration-Manager.zip
+      Description: Provides core platform management capabilities
+      Layers:
+        - !Ref HCOMLambdaLayer
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  PlatformConfigMgmtLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${PlatformConfigMgmtLambda}
+      KmsKeyId: !GetAtt [HCOMKey, Arn]
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  PlatformConfigMgmtLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt PlatformConfigMgmtLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Sub ${AWS::AccountId}
+      PrincipalOrgID: 
+        !Ref PrincipalOrgID
+
+  OnPremRGroup:
+    Type: AWS::ResourceGroups::Group
+    Properties: 
+      ResourceQuery: 
+        Type: 
+          "TAG_FILTERS_1_0"
+        Query:
+          ResourceTypeFilters:
+            - "AWS::AllSupported"
+          TagFilters:
+            -
+              Key: "CloudWatch-Profile"
+              Values:
+                - "5"
+      Description: Group all OnPrem instances for managed automations
+      Name: HCOM-OnPrem-Instances
+      Tags: 
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  OnPremRunningEBRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "OnPrem start state change - create alarms"
+        EventBusName: !Ref HCOMEventBus
+        EventPattern:
+          source:  
+            - "hcom.onprem"
+          detail-type: 
+            - "OnPrem-Instance-State-Change-Notification"
+          detail:
+            state:
+              - "running"
+        Name: "HCOM-OnPrem-Running"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Id: Target1
+            Arn: !GetAtt [PlatformAutomationQueue, Arn]
+            InputTransformer:
+              InputPathsMap:
+                "account": "$.account"
+                "instance": "$.detail.instance-id"
+                "region": "$.region"
+              InputTemplate: |
+                {
+                  "account": <account>,
+                  "instance": <instance>,
+                  "region": <region>,
+                  "reboot": "no",
+                  "resource": "onprem",
+                  "mode": 1,
+                  "Function": "cw_lifecycle",
+                  "skipconfig": 0
+                }
+            DeadLetterConfig:
+              Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+  OnPremStoppedEBRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "OnPrem stop state change - create alarms"
+        EventBusName: !Ref HCOMEventBus
+        EventPattern:
+          source:  
+            - "hcom.onprem"
+          detail-type: 
+            - "OnPrem-Instance-State-Change-Notification"
+          detail:
+            state:
+              - "stopped"
+        Name: "HCOM-OnPrem-Stopped"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Id: Target1
+            Arn: !GetAtt [PlatformAutomationQueue, Arn]
+            InputTransformer:
+              InputPathsMap:
+                "account": "$.account"
+                "instance": "$.detail.instance-id"
+                "region": "$.region"
+              InputTemplate: |
+                {
+                  "account": <account>,
+                  "instance": <instance>,
+                  "region": <region>,
+                  "reboot": "no",
+                  "resource": "onprem",
+                  "mode": 4,
+                  "Function": "cw_lifecycle",
+                  "skipconfig": 0
+                }
+            DeadLetterConfig:
+              Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+
+  DynamoDBEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "DynamoDB event actions"
+      EventBusName: !Ref HCOMEventBus
+      EventPattern:
+        source:  
+          - "aws.dynamodb"
+        detail-type: 
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource: 
+            - "dynamodb.amazonaws.com"
+          eventName:
+            - "CreateTable"
+            - "DeleteTable"
+            #- "TagResource"
+            - "ImportTable"
+      Name: "HCOM-DynamoDB-State-Change"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Id: Target1
+          Arn: !GetAtt [PlatformAutomationQueue, Arn]
+          InputTransformer:
+            InputPathsMap:
+              "account": "$.account"
+              "region": "$.region"
+              "source": "$.detail.eventSource"
+              "event": "$.detail.eventName"
+              "tablename": "$.detail.responseElements.tableDescription.tableName"
+              "tablearn": "$.detail.responseElements.tableDescription.tableArn"
+              "tablearn2": "$.detail.requestParameters.resourceArn"
+            InputTemplate: |
+              {
+                "account": <account>,
+                "Function": "cw_lifecycle",
+                "source": <source>,
+                "region": <region>,
+                "event": <event>,
+                "resource": "dynamodb",
+                "tablename": <tablename>,
+                "tablearn": <tablearn>,
+                "tablearn2": <tablearn2>,
+                "mode": 2
+              }
+          DeadLetterConfig:
+            Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+  DynamoDBTagEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "DynamoDB event actions"
+      EventBusName: !Ref HCOMEventBus
+      EventPattern:
+        source:  
+          - "aws.dynamodb"
+        detail-type: 
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource: 
+            - "dynamodb.amazonaws.com"
+          eventName:
+            - "TagResource"
+      Name: "HCOM-DynamoDB-Tag-State-Change"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Id: Target1
+          Arn: !GetAtt [PlatformAutomationQueue, Arn]
+          InputTransformer:
+            InputPathsMap:
+              "account": "$.account"
+              "region": "$.region"
+              "source": "$.detail.eventSource"
+              "tablearn": "$.detail.requestParameters.resourceArn"
+              "environment": "$.detail.requestParameters.tags.Environment"
+              "profile": "$.detail.requestParameters.tags.CloudWatch-Profile"
+            InputTemplate: |
+              {
+                "account": <account>,
+                "source": <source>,
+                "region": <region>,
+                "tablearn2": <tablearn>,
+                "environment": <environment>,
+                "profile": <profile>,
+                "event": "TagResource",
+                "Function": "cw_lifecycle",
+                "resource": "dynamodb-tag",
+                "mode": 2
+              }
+          DeadLetterConfig:
+            Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+  
+  HCOMDynamoDB:
+    Type: AWS::DynamoDB::Table
+    Condition: LoadDBOnce
+    Properties: 
+      AttributeDefinitions:
+        - 
+          AttributeName: 'msptype'
+          AttributeType: 'S'
+        -
+          AttributeName: 'mspname'
+          AttributeType: 'S'
+      KeySchema: 
+        - 
+          AttributeName: "msptype"
+          KeyType: "HASH"
+        - 
+          AttributeName: "mspname"
+          KeyType: "RANGE"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "10"
+        WriteCapacityUnits: "20"
+      ImportSourceSpecification:
+        InputFormat: "DYNAMODB_JSON"
+        S3BucketSource: 
+          S3Bucket: !Sub "${HCOMS3LambdaBucket}"
+          S3KeyPrefix: "db/platform-configuration.json"
+      TableClass: STANDARD
+      TableName: "hcom-configuration"
+      Tags: 
+        - 
+          Key: "Environment"
+          Value: "PROD"
+        - 
+          Key: "CloudWatch-Profile"
+          Value: "1"
+      SSESpecification:
+        KMSMasterKeyId: !Ref HCOMKey
+        SSEEnabled: true
+        SSEType: "KMS"
+
+  RDSEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "RDS state changes to Central EventBridge"
+      EventBusName: !Ref HCOMEventBus
+      EventPattern:
+        source:  
+          - "aws.rds"
+        detail-type: 
+          - "RDS DB Instance Event"
+        detail:
+          EventID: 
+            - "RDS-EVENT-0088"
+            - "RDS-EVENT-0087"
+            - "RDS-EVENT-0003"
+            - "RDS-EVENT-0005"
+      Name: "HCOM-RDS-State-Change"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Id: Target1
+          Arn: !GetAtt [PlatformAutomationQueue, Arn]
+          InputTransformer:
+            InputPathsMap:
+              "account": "$.account"
+              "region": "$.region"
+              "source": "$.source"
+              "event": "$.detail.EventID"
+              "instancename": "$.detail.SourceIdentifier"
+              "instancearn": "$.detail.SourceArn"
+              "environment": "$.detail.Tags.Environment"
+              "profile": "$.detail.Tags.CloudWatch-Profile"
+            InputTemplate: |
+              {
+                "account": <account>,
+                "Function": "cw_lifecycle",
+                "source": <source>,
+                "region": <region>,
+                "event": <event>,
+                "resource": "rds",
+                "instancename": <instancename>,
+                "instancearn": <instancearn>,
+                "environment": <environment>,
+                "profile": <profile>,
+                "mode": 2
+              }
+          DeadLetterConfig:
+            Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+  RDSTagEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Create Alarms due to tag change on RDS DB instance"
+      EventBusName: !Ref HCOMEventBus
+      EventPattern:
+        source:  
+          - "aws.tag"
+        detail-type: 
+          - "Tag Change on Resource"
+        detail:
+          service: 
+            - "rds"
+          resource-type:
+            - "db"
+      Name: "HCOM-RDS-Tag-State-Change"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Id: Target1
+          Arn: !GetAtt [PlatformAutomationQueue, Arn]
+          InputTransformer:
+            InputPathsMap:
+              "account": "$.account"
+              "region": "$.region"
+              "source": "$.source"
+              "service": "$.detail.service"
+              "instancearn": "$.resources"
+              "environment": "$.detail.tags.Environment"
+              "profile": "$.detail.tags.CloudWatch-Profile"
+              "changed": "$.detail.changed-tag-keys"
+            InputTemplate: |
+              {
+                "account": <account>,
+                "Function": "cw_lifecycle",
+                "source": <source>,
+                "region": <region>,
+                "service": <service>,
+                "instancearn": <instancearn>,
+                "environment": <environment>,
+                "resource": "rds-tag",
+                "changed": <changed>,
+                "profile": <profile>,
+                "mode": 2
+              }
+          DeadLetterConfig:
+            Arn: !GetAtt PlatformAutomationSQSDLQ.Arn
+
+
+  AWSBackupAuditLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${AWSBackupAuditLambda}
+      KmsKeyId: !GetAtt [HCOMKey, Arn]
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  EC2AuditLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${EC2AuditLambda}
+      KmsKeyId: !GetAtt [HCOMKey, Arn]
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+  CloudWatchLifecycleLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /aws/lambda/${CloudWatchLifecycleLambda}
+      KmsKeyId: !GetAtt [HCOMKey, Arn]
+      RetentionInDays: 30
+      Tags:
+        - Key: "Owner"
+          Value: !Ref HCOMOwnerTag
+
+
+  CentralBackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties: 
+      AccessPolicy:
+        Version: "2012-10-17"
+        Statement:
+            - Effect: "Allow"
+              Principal: "*"
+              Action: "backup:CopyIntoBackupVault"
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  aws:PrincipalOrgID: 
+                    !Ref PrincipalOrgID
+              
+      BackupVaultName: Central-Backup-Vault
+      LockConfiguration:
+        MinRetentionDays: 2
+        MaxRetentionDays: 7
+      BackupVaultTags: 
+        "DestinationBackupVault": True
+        "Owner": !Ref HCOMOwnerTag
+      EncryptionKeyArn: !GetAtt [HCOMKey, Arn]
+
+  SSMStateCalendar:
+    Type: 'AWS::SSM::Document'
+    Properties:
+      Content: "BEGIN:VCALENDAR\r\nPRODID:-//AWS//Change Calendar 1.0//EN\r\nVERSION:2.0\r\nX-CALENDAR-TYPE:DEFAULT_CLOSED\r\nX-WR-CALDESC:Maintain State Calendar\r\nBEGIN:VTODO\r\nDTSTAMP:20200320T004207Z\r\nUID:3b5af39a-d0b3-4049-a839-d7bb8af01f92\r\nSUMMARY:Add events to this calendar.\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+      DocumentType: ChangeCalendar
+      DocumentFormat: TEXT
+      Name: HCOM-State-Calendar
+
+  SSMPatchCalendar:
+    Type: 'AWS::SSM::Document'
+    Properties:
+      Content: "BEGIN:VCALENDAR\r\nPRODID:-//AWS//Patch Calendar 1.0//EN\r\nVERSION:2.0\r\nX-CALENDAR-TYPE:DEFAULT_OPEN\r\nX-WR-CALDESC:Maintain Patch Calendar\r\nBEGIN:VTODO\r\nDTSTAMP:20200320T004207Z\r\nUID:3b5af39a-d0b3-4049-a839-d7bb8af01f93\r\nSUMMARY:Add events to this calendar.\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+      DocumentType: ChangeCalendar
+      DocumentFormat: TEXT
+      Name: HCOM-Patch-Calendar
+  
+Outputs:
+  CentralKMSKeyArn:
+    Description: KMS key ARN to be used by tenant accounts
+    Value: !GetAtt HCOMKey.Arn
+    Export: 
+      Name: CentralKmsKeyArn
+  CentralAccount:
+    Description: Central HCOM Management account
+    Value: !Ref AWS::AccountId
+    Export: 
+      Name: CentralAccount
+  CentralRegion:
+    Description: Central HCOM Management Region
+    Value: !Ref AWS::Region
+    Export: 
+      Name: CentralRegion

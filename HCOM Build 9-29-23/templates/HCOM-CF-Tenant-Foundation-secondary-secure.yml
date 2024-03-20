@@ -1,0 +1,479 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Provides AWS Operations Management Platform tenant setup / implementation. Run once for each AWS Account to be managed"
+Parameters:
+
+  CentralAccount:
+    Type: String
+    Default: 'account'
+    Description: Provide the AWS Account number for the central / management account. For single account environments provide the single AWS account number.
+
+  CentralRegion:
+    Type: String
+    Default: 'us-gov-east-1'
+    Description: Provide the region for the central Account
+    AllowedValues:
+      - us-gov-east-1
+      - us-gov-west-1
+      - us-gov-secret-1
+      - us-gov-topsecret-1
+      - us-gov-topsecret-2
+      - us-east-1
+      - us-east-2
+      - us-west-1
+      - us-west-2
+
+  ThisRegionS3Bucket:
+    Type: String
+    Default: "hcom-software-distribution-replacecentralaccount-replaceregion"
+    Description: HCOM Distribution S3 Bucket name for this secondary region. 
+
+  MSPKey:
+    Type: String
+    Default: 'mrk-yourkey'
+    Description: Replace with the Central Account KMS Key ID found in the same region as this deployment. For Secondary regions this will be a replica key. It will be used to encrypt services.
+  
+  OwnerTag:
+    Type: String
+    Default: 'replace@email.com'
+    Description: Replace with the email for the system Owner tag that will be added to all resources that support the tag.
+  
+Resources:
+
+  PushCustomMetricRunDoc: 
+    Type: AWS::SSM::Document
+    Properties:
+      Content:
+        schemaVersion: '2.2'
+        description: 'Run a script on Windows and Linux instances to capture custom metric value and push metric to CloudWatch'
+        parameters:
+          metricpath:
+            type: String
+            description: contains the path to the output from the canary script. 1 = not clean (throw alarm) 0 = clean. or C:\\ProgramData\\Amazon\\SSM\\Download\\custom-metric-status.txt for Windows
+            default: '/etc/amazon/ssm/custom-metric-status.txt'
+          metricname:
+            type: String
+            description: contains the name of the Custom Metric
+            default: 'replace with metric name'
+          metricnamespace:
+            type: String
+            description: contains the namespace of the Custom Metric
+            default: 'Custom'
+        mainSteps:
+          - action: aws:runPowerShellScript
+            name: ReadPushCustomWin
+            precondition:
+                      StringEquals:
+                      - platformType
+                      - Windows  
+            inputs:
+              timeoutSeconds: "90"
+              Parameters:
+                metricpath:
+                - '{{metricpath}}'
+                metricname:
+                - '{{metricname}}'
+                metricnamespace:
+                - '{{metricnamespace}}'
+              runCommand:
+                - Import-Module AWSPowerShell; $instance = $env:AWS_SSM_INSTANCE_ID;
+                - $monitor_status = Get-Content {{metricpath}};
+                - echo 'var check:' $instance {{metricpath}} {{metricname}} {{metricnamespace}} $monitor_status
+                - $Metric = [Amazon.CloudWatch.Model.MetricDatum]::new();
+                - $Dimension = [Amazon.CloudWatch.Model.Dimension]::new();
+                - $Dimension.Name = "Instance";
+                - $Dimension.Value = $instance;
+                - $Metric.Dimensions = $Dimension;
+                - $Metric.MetricName = {{metricname}}; 
+                - $Metric.Value = $monitor_status;
+                - Write-CWMetricData -MetricData $Metric -Namespace {{metricnamespace}} -Region us-gov-east-1
+          - action: aws:runShellScript
+            name: ReadPushCustomLinux
+            precondition:
+                      StringEquals:
+                      - platformType
+                      - Linux
+            inputs:
+              timeoutSeconds: "60"
+              runCommand:
+              - awsregion=$(aws configure get region);
+              - if [ "$awsregion" = '' ]; then aws configure set region us-gov-west-1; fi;
+              - instance=$(ls -al /var/lib/cloud/ | grep -iUE "/var/lib/cloud/instances/" | sed -e "s/^.*instances\///");
+              - monitor_status=$(cat {{metricpath}});
+              - echo $instance {{metricpath}} {{metricname}} {{metricnamespace}} $monitor_status
+              - aws cloudwatch put-metric-data --metric-name {{metricname}} --namespace {{metricnamespace}} --value $monitor_status --dimensions Instance=$instance;
+      DocumentType: Command
+      Name: "HCOM-CloudWatch-Push-Custom-Metric"
+
+  PushEC2StateEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "push EC2 state changes to Central Account"
+      EventBusName: "default"
+      EventPattern:
+        source:  
+          - "aws.ec2"
+        detail-type: 
+          - "EC2 Instance State-change Notification"
+        detail:
+          state: 
+            - "stopping"
+            - "running"
+            - "terminated"
+      Name: "HCOM-Tenant-Push-Events-To-Central"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: !Join
+                - ''
+                - - !Sub 'arn:${AWS::Partition}:events:'
+                  - !Sub '${CentralRegion}'
+                  - !Sub ':${CentralAccount}:event-bus/HCOM-Central-EB'
+          Id: Target1
+          RoleArn: {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Push-Events-to-Central-EB"}
+          DeadLetterConfig:
+            Arn: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:HCOM-DeadLetterQueue
+  
+  PushEC2RebootEBRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "push EC2 reboot event to Central Account"
+      EventBusName: "default"
+      EventPattern:
+        source:  
+          - "aws.ec2"
+        detail-type: 
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource: 
+            - "ec2.amazonaws.com"
+          eventName: 
+            - "RebootInstances"
+      Name: "HCOM-Tenant-Push-Reboots-To-Central"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: {"Fn::Sub": "arn:${AWS::Partition}:events:${CentralRegion}:${CentralAccount}:event-bus/HCOM-Central-EB"}
+          Id: Target1
+          RoleArn: {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Push-Events-to-Central-EB"}
+          DeadLetterConfig:
+            Arn: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:HCOM-DeadLetterQueue
+  
+  PushBackupEventsEBRulePrim:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "push Backup state changes to Central Account"
+      EventBusName: "default"
+      EventPattern:
+        source:  
+          - "aws.backup"
+        detail-type: 
+          - "Backup Job State Change"
+        detail:
+          state: 
+            - "FAILED"
+            - "EXPIRED"
+            - "COMPLETED"
+      Name: "HCOM-Tenant-Push-Backup-Events-To-Central"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: {"Fn::Sub": "arn:${AWS::Partition}:events:${CentralRegion}:${CentralAccount}:event-bus/HCOM-Central-EB"}
+          Id: Target1
+          RoleArn: {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Push-Events-to-Central-EB"}
+          DeadLetterConfig:
+            Arn: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:HCOM-DeadLetterQueue
+
+  PushRestoreEventsEBRulePrim:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "push Restore state changes to Central Account"
+      EventBusName: "default"
+      EventPattern:
+        source:  
+          - "aws.backup"
+        detail-type: 
+          - "Restore Job State Change"
+        detail:
+          status: 
+            - "FAILED"
+            - "COMPLETED"
+      Name: "HCOM-Tenant-Push-Restore-Events-To-Central"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: {"Fn::Sub": "arn:${AWS::Partition}:events:${CentralRegion}:${CentralAccount}:event-bus/HCOM-Central-EB"}
+          Id: Target1
+          RoleArn: {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Push-Events-to-Central-EB"}
+          DeadLetterConfig:
+            Arn: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:HCOM-DeadLetterQueue
+
+  PushOnPremEventsEBRulePrim:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "push OnPrem state changes to Central Account"
+      EventBusName: "default"
+      EventPattern:
+        source:  
+          - "hcom.onprem"
+        detail-type: 
+          - "OnPrem-Instance-State-Change-Notification"
+        detail:
+          state: 
+            - "running"
+            - "stopped"
+      Name: "HCOM-Tenant-Push-OnPrem-Events-To-Central"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: {"Fn::Sub": "arn:${AWS::Partition}:events:${CentralRegion}:${CentralAccount}:event-bus/HCOM-Central-EB"}
+          Id: Target1
+          RoleArn: {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Push-Events-to-Central-EB"}
+          DeadLetterConfig:
+            Arn: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:HCOM-DeadLetterQueue
+
+  OnPremSSMAgentConfgRunDoc: 
+    Type: AWS::SSM::Document
+    Properties:
+      Content:
+        schemaVersion: '2.2'
+        description: 'Run a script on OnPrem servers to manage SSM Agent Config and other settings'
+        parameters:
+          commands:
+            type: String
+            description: "Copy standard configuration files"
+            default: !Sub |
+              ### For this code to work, SSM Agent must be running as user with permission to copy and create files for locations in this script including ability to create Start-Event Task.
+              Import-Module AWSPowerShell; 
+              
+              echo '--- Copying ssm agent config template and updated cloudwatch agent start script. ---'
+              
+              aws s3 cp s3://${ThisRegionS3Bucket}/scripts/amazon-ssm-agent.json "C:\ProgramData\Amazon\SSM\Download\amazon-ssm-agent.json" --region ${AWS::Region};
+              aws s3 cp s3://${ThisRegionS3Bucket}/scripts/amazon-cloudwatch-agent-ctl.ps1 "C:\Program Files\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1" --region ${AWS::Region};
+              aws s3 cp s3://${ThisRegionS3Bucket}/scripts/custom-metric-status.txt "C:\ProgramData\Amazon\SSM\Download\custom-metric-status.txt" --region ${AWS::Region};
+              
+              copy "C:\ProgramData\Amazon\SSM\Download\amazon-ssm-agent.json" "c:\Program Files\Amazon\SSM\amazon-ssm-agent.json";
+              # create json based EventBridge Event;
+              #echo '--- Creating eventbridge event json files ---';
+              echo '--- Creating startup and shutdown scripts that create eventbridge events to invoke automations. ---';
+              ### Start script;
+              $instanceid2 = Invoke-Expression "& `"C:\Program Files\Amazon\SSM\ssm-cli.exe`" get-instance-information"
+              $instance = ConvertFrom-Json $instanceid2
+              $instanceid = $instance."instance-id"
+              echo '--- current instance id:' $instanceid;
+              $json1 ='"[{\"Source\":\"hcom.onprem\",\"DetailType\":\"OnPrem-Instance-State-Change-Notification\",\"Detail\":\"{\\\"instance-id\\\":\\\"' + $instanceid + '\\\",\\\"state\\\":\\\"stopped\\\"}\"}]"'
+              $step6 = 'echo $json;'
+              $step7 = 'aws events put-events --entries $json;'
+              $stopscript = "$" + "json='" + $json1 + "';" + $step6 + $step7;
+              echo $stopscript;
+              $stopscript | Out-File -Encoding "Default" "C:\ProgramData\Amazon\SSM\Download\stop.ps1";
+              $json2 ='"[{\"Source\":\"hcom.onprem\",\"DetailType\":\"OnPrem-Instance-State-Change-Notification\",\"Detail\":\"{\\\"instance-id\\\":\\\"' + $instanceid + '\\\",\\\"state\\\":\\\"running\\\"}\"}]"'
+              $startscript = "$" + "json='" + $json2 + "';" + $step6 + $step7;
+              $startscript | Out-File -Encoding "Default" "C:\ProgramData\Amazon\SSM\Download\start.ps1";
+
+              #create startup and shutdown script triggers;
+              Unregister-ScheduledJob StartEvent
+              $trigger = New-JobTrigger -AtStartup -RandomDelay 00:00:30;
+              Register-ScheduledJob -Trigger $trigger -FilePath C:\ProgramData\Amazon\SSM\Download\start.ps1 -Name StartEvent;
+          LinuxCommands:
+            type: String
+            description: "Copy standard configuration files"
+            default: !Sub |
+              ### install awscli - use the zip method to install as root user
+              #echo '--- install/update awscli'
+              #sudo yum install curl unzip -y
+              #curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              #unzip awscliv2.zip
+              #sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
+              ### initialize AWS settings are variables
+              echo '--- initial aws region and detect instanceid'
+              awsregion=$(aws configure get region);
+              if [ "$awsregion" = '' ]; then aws configure set region ${AWS::Region}; fi;
+              #instance=$(ls -al /var/lib/amazon/ssm | grep -oe "mi-.*")
+              instanceid=$(ssm-cli get-instance-information | grep -o '"instance-id":"[^"]*' | grep -o '[^"]*$')
+              echo 'instance' $instanceid;
+              ### setup startup and shutdown scripts in /etc/amazon/ssm/files
+              sudo mkdir /etc/amazon/ssm/files
+              sudo chmod 777 /etc/amazon/ssm/files
+              sudo rm -f /etc/amazon/ssm/files/start.json /etc/amazon/ssm/files/stop.json
+              echo '--- create stop and start files ---'
+              echo '[{"DetailType": "OnPrem-Instance-State-Change-Notification","Source": "hcom.onprem","Detail": "{\"instance-id\": \"replaceid\",\"state\": \"running\"}"}]' | sudo tee /etc/amazon/ssm/files/start.json
+              echo '[{"DetailType": "OnPrem-Instance-State-Change-Notification","Source": "hcom.onprem","Detail": "{\"instance-id\": \"replaceid\",\"state\": \"stopped\"}"}]' | sudo tee /etc/amazon/ssm/files/stop.json
+              #### add local instance id to start and stop event json
+              echo '--- update start and stop with instance id ---'
+              sed -i "s|replaceid|$instanceid|" /etc/amazon/ssm/files/start.json
+              sed -i "s|replaceid|$instanceid|" /etc/amazon/ssm/files/stop.json
+              #echo "aws events put-events --entries file://start.json" | sudo tee /etc/amazon/ssm/files/startup_script.sh; sudo chmod +x /etc/amazon/ssm/files/startup_script.sh
+              #echo "aws events put-events --entries file://stop.json" | sudo tee /etc/amazon/ssm/files/shutdown_script.sh; sudo chmod +x /etc/amazon/ssm/files/shutdown_script.sh
+              #sudo yum -y install awscli # don't use yum, use pip3
+              echo '--- copy amazon-cloudwatch-agent-ctl to bin folder'
+              aws s3 cp s3://${ThisRegionS3Bucket}/scripts/amazon-cloudwatch-agent-ctl.sh /etc/amazon/ssm/files/amazon-cloudwatch-agent-ctl
+              cp /etc/amazon/ssm/files/amazon-cloudwatch-agent-ctl /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+              echo '--- copy ssm-agent-json to files folder'
+              aws s3 cp s3://${ThisRegionS3Bucket}/scripts/amazon-ssm-agent.json /etc/amazon/ssm/files/amazon-ssm-agent.json
+              echo '--- copy onprem-startup.ini to files'
+              aws s3 cp s3://${ThisRegionS3Bucket}/scripts/hcom-onprem-startup.ini /etc/amazon/ssm/files/hcom-onprem-startup.ini
+              echo '--- copy json to ssm folder'
+              cp /etc/amazon/ssm/files/amazon-ssm-agent.json /etc/amazon/ssm/amazon-ssm-agent.json
+              echo '--- copy onprem-setup.ini to system folder for .service'
+              cp /etc/amazon/ssm/files/hcom-onprem-startup.ini /etc/systemd/system/hcom-startup.service
+              echo '--- reload daemon'
+              systemctl daemon-reload
+              echo '--- enable hcom-startup.service'
+              systemctl enable hcom-startup.service
+              echo '--- restart ssm agent for final step'
+              sudo systemctl restart amazon-ssm-agent
+        mainSteps:
+        - action: aws:runPowerShellScript
+          name: SSMConfigWin
+          precondition:
+                    StringEquals:
+                    - platformType
+                    - Windows  
+          inputs:
+            timeoutSeconds: "120"
+            runCommand:
+              - "{{ commands }}"
+        - action: aws:runShellScript
+          name: SSMConfigLinux
+          precondition:
+                    StringEquals:
+                    - platformType
+                    - Linux
+          inputs:
+            timeoutSeconds: "90"
+            runCommand:
+              - "{{ LinuxCommands }}"
+      DocumentType: Command
+      Name: "HCOM-Manage-OnPremise-Instances"
+
+  PushRDSStateEBRulePrim:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "push RDS state changes to Central EventBridge"
+      EventBusName: "default"
+      EventPattern:
+        source:  
+          - "aws.rds"
+        detail-type: 
+          - "RDS DB Instance Event"
+        detail:
+          EventID: 
+            - "RDS-EVENT-0088"
+            - "RDS-EVENT-0087"
+            - "RDS-EVENT-0003"
+            - "RDS-EVENT-0005"
+      Name: "HCOM-Tenant-Push-RDS-Events-To-Central"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: {"Fn::Sub": "arn:${AWS::Partition}:events:${CentralRegion}:${CentralAccount}:event-bus/HCOM-Central-EB"}
+          Id: Target1
+          RoleArn: {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Push-Events-to-Central-EB"}
+          DeadLetterConfig:
+            Arn: {"Fn::Sub":  "arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:HCOM-DeadLetterQueue" }
+
+  PushDynamoDBEBRulePrim:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "push DynamoDB events to Central Account"
+      EventBusName: "default"
+      EventPattern:
+        source:  
+          - "aws.dynamodb"
+        detail-type: 
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource: 
+            - "dynamodb.amazonaws.com"
+          eventName: 
+            - "CreateTable"
+            - "DeleteTable"
+            - "TagResource"
+      Name: "HCOM-Tenant-Push-DynamoDB-Events-To-Central"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: {"Fn::Sub": "arn:${AWS::Partition}:events:${CentralRegion}:${CentralAccount}:event-bus/HCOM-Central-EB"}
+          Id: Target1
+          RoleArn: {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Push-Events-to-Central-EB"}
+          DeadLetterConfig:
+            Arn: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:HCOM-DeadLetterQueue
+
+  PushRDSTagEBRulePrim:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "push RDS tag changes to Central EventBridge"
+      EventBusName: "default"
+      EventPattern:
+        source:  
+          - "aws.tag"
+        detail-type: 
+          - "Tag Change on Resource"
+        detail:
+          service: 
+            - "rds"
+      Name: "HCOM-Tenant-Push-RDS-Tag-Events-To-Central"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: {"Fn::Sub": "arn:${AWS::Partition}:events:${CentralRegion}:${CentralAccount}:event-bus/HCOM-Central-EB"}
+          Id: Target1
+          RoleArn: {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Push-Events-to-Central-EB"}
+          DeadLetterConfig:
+            Arn: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:HCOM-DeadLetterQueue
+
+  LocalBackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties: 
+      BackupVaultName: Local-Backup-Vault
+      LockConfiguration:
+        MinRetentionDays: 1
+        MaxRetentionDays: 2
+      EncryptionKeyArn: {"Fn::Sub": "arn:${AWS::Partition}:kms:${AWS::Region}:${CentralAccount}:key/${MSPKey}"} 
+      AccessPolicy:
+        Version: "2012-10-17"
+        Statement:
+            - Effect: "Allow"
+              Principal: 
+                AWS:
+                  - !Sub 'arn:${AWS::Partition}:iam::${CentralAccount}:root'
+              Action: 
+                - 'backup:CopyIntoBackupVault'
+              Resource: "*"
+      BackupVaultTags: 
+        "Owner": !Ref OwnerTag
+
+  LocalBackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: "LocalBackupPlan"
+        BackupPlanRule:
+          - RuleName: "LocalBackupRule"
+            TargetBackupVault: !Ref LocalBackupVault
+            ScheduleExpression: "cron(0 12 ? * MON-FRI *)"
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle:
+              DeleteAfterDays: 1
+            CopyActions:
+              - DestinationBackupVaultArn: !Sub "arn:${AWS::Partition}:backup:${CentralRegion}:${CentralAccount}:backup-vault:Central-Backup-Vault"
+                Lifecycle:
+                  DeleteAfterDays: 2
+        AdvancedBackupSettings:
+          - BackupOptions: {"WindowsVSS":"enabled"}
+            ResourceType: "EC2"
+
+  LocalBackupSelectionSecondary:
+    Type: AWS::Backup::BackupSelection
+    Properties: 
+      BackupPlanId: !Ref LocalBackupPlan
+      BackupSelection: 
+        IamRoleArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/HCOM-Local-Backup-Role'
+        SelectionName: AllCloudWatchManagedResources
+        Resources:
+          - '*'
+        Conditions:
+          StringLike:
+            - ConditionKey: "aws:ResourceTag/CloudWatch-Profile"
+              ConditionValue: "*"

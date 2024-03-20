@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Creates HCOM S3 Distribution bucket for staging deployment files in the primary region"
+
+Parameters:
+  PrincipalOrgID:
+    Type: String
+    Default: 'o-replacewithorg'
+    Description: Replace with the principal Organization ID from AWS Organizations. This is required to enable multi / cross-account features that provide centralized management and automation.
+
+  OwnerTag:
+    Type: String
+    Default: 'reaplce@email.com'
+    Description: Replace with the email for the system Owner tag that will be added to all AWS resources created
+
+Resources:
+  HCOMOpsDistributionBucket:
+    Type: AWS::S3::Bucket
+    Description: Used to store PlatformOps reports
+    Properties:
+      BucketName: !Sub "hcom-software-distribution-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: "Owner"
+          Value: !Ref OwnerTag
+
+  HCOMOpsDistributionBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket: !Ref HCOMOpsDistributionBucket
+      PolicyDocument: 
+        Version:  2012-10-17
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: "Allow"
+            Resource: !Sub "arn:${AWS::Partition}:s3:::hcom-software-distribution-${AWS::AccountId}-${AWS::Region}/*"
+            Principal:  "*"
+            Condition:
+              ForAnyValue:StringEquals:
+                "aws:PrincipalOrgID":
+                  - !Ref PrincipalOrgID
+
+  HCOMPrincipalOrgIdParam:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: AWS Organization PrincipalOrgID
+      Name: HCOM-Setting-PrincipalOrgID
+      Tier: Standard
+      Type: String
+      Value: !Ref PrincipalOrgID
+
+  HCOMDistroBucketParam:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: HCOM Central S3 Distribution Bucket name - stores all HCOM deployment files
+      Name: HCOM-Setting-Distribution-Bucket
+      Tier: Standard
+      Type: String
+      Value: !Sub "hcom-software-distribution-${AWS::AccountId}-${AWS::Region}"
+
+  HCOMOwnerTagParam:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: Owner tag that will be place on all aws resources created
+      Name: HCOM-Setting-OwnerTag
+      Tier: Standard
+      Type: String
+      Value: !Ref OwnerTag
+
+  #primes the hcom share library (python module) deplyed as a lambda-layer for dynamodb calls
+  HCOMCentralRegionParam:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: Primary Region for HCOM deployment
+      Name: HCOM-Primary-Region
+      Tier: Standard
+      Type: String
+      Value: !Ref AWS::Region
+    
+Outputs:
+  PrincipalOrgIdOut:
+    Description: AWS Organization PrincipalOrgID
+    Value: !Ref PrincipalOrgID
+    Export: 
+      Name: !Sub "HCOM-PrincipalOrgID"
+  CentralAccountOut:
+    Description: Central HCOM Management account
+    Value: !Sub ${AWS::AccountId}
+    Export: 
+      Name: !Sub "HCOM-CentralAccount"
+  CentralRegionOut:
+    Description: Central HCOM Management Region for cenral Account
+    Value: !Sub "${AWS::Region}"
+    Export: 
+      Name: !Sub "HCOM-CentralRegion"
+  OwnerTagOut:
+    Description: HCOM Owner Tag is added when AWS resources are created
+    Value: !Ref OwnerTag
+    Export: 
+      Name: !Sub "HCOM-OwnerTag"

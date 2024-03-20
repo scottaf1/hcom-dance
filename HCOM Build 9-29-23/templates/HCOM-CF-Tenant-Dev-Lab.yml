@@ -1,0 +1,916 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Builds development lab for the MSP Platform Operations capability"
+Parameters:
+  OwnerTag:
+    Type: String
+    Default: 'tom.moore@gdit.com'
+    Description: Replace with the email for the system Owner tag that will be added to all resources that support the tag.
+
+  CentralAccount:
+    Type: String
+    Default: 'account'
+    Description: Replace with the AWS Account number for the central / management account. For single account environments provide the single AWS account number.
+
+  CentralRegion:
+    Type: String
+    Default: 'us-gov-east-1'
+    Description: Provide the primary AWS Region for the central / management account where this will be deployed.
+    AllowedValues:
+      - us-gov-west-1
+      - us-gov-east-1
+
+  DeploymentRegion:
+    Type: String
+    Default: Primary
+    Description: Are you deploying this template to the Primary or Secondary region? The Primary region creates global objects that should not be recreated in secondary regions.
+    AllowedValues:
+      - Primary
+      - Secondary
+
+  CentralKey:
+    Type: String
+    Default: 'mrk-replacewithkey'
+    Description: KMS Key from Central account just the part past the '...:key/mrk-some-key'' in the arn
+
+  TenantName:
+    Type: String
+    Default: 'VDMS'
+    Description: Replace with the friendly name for this dev account and should match name defined through the HCOM-Platform-Configuration-Manager Dashboard. Should be unique across multi-account test environment
+
+  DBInstanceID:
+    Default: hcomdbinstance
+    Description: My database instance
+    Type: String
+    MinLength: '1'
+    MaxLength: '63'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: >-
+      Must begin with a letter and must not end with a hyphen or contain two
+      consecutive hyphens.
+
+  DBClusterID:
+    Default: hcomcluster
+    Description: My database cluster
+    Type: String
+    MinLength: '1'
+    MaxLength: '63'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: >-
+      Must begin with a letter and must not end with a hyphen or contain two
+      consecutive hyphens.
+
+  DBInstanceClass:
+    Default: db.r5.large
+    Description: DB instance class
+    Type: String
+    ConstraintDescription: Must select a valid DB instance type.
+
+  CreateRDSDatabase:
+    Type: String
+    Default: "Skip RDS"
+    Description: Have you deployed the configuration database alread? If not, you need to select Load Database. You only need to load it once, otherwise you may overwrite changes. 
+    AllowedValues:
+      - "Skip RDS"
+      - "Create RDS"
+    
+  CreateDynamoDBDatabase:
+    Type: String
+    Default: "Skip DynamoDB"
+    Description: Have you deployed the configuration database alread? If not, you need to select Load Database. You only need to load it once, otherwise you may overwrite changes. 
+    AllowedValues:
+      - "Skip DynamoDB"
+      - "Create DynamoDB"
+      - "Create DynamoDB with Encryption"
+
+Conditions:
+  CreateRDS: !Equals
+    - !Ref CreateRDSDatabase
+    - "Create RDS"
+  CreateDynamoDB: !Equals
+    - !Ref CreateDynamoDBDatabase
+    - "Create DynamoDB"
+  CreateEncryptDynamoDB: !Equals
+    - !Ref CreateDynamoDBDatabase
+    - "Create DynamoDB with Encryption"
+  isSecondary: !Equals [!Ref DeploymentRegion, Secondary]
+  isPrimary: !Equals [!Ref DeploymentRegion, Primary]
+  #isPrimary: !Equals [!Ref DeploymentRegion, Primary]
+
+Mappings:
+  RegionMap:
+    us-gov-east-1:
+      Linux: ami-08567966c9e911dce
+      Win: ami-058a673c00b765545
+    us-gov-west-1:
+      Linux: ami-08e5df85f74b712b3
+      Win: ami-0245fa5662c0c6fad
+
+  
+
+Resources:
+  # create launch template that enforces SSM Agent Meta Data Service v2 which is more secure and meets compliance check. applied to Linux 1 and Win 1 in West
+  HCOMSecureLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties: 
+      LaunchTemplateData: 
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+      LaunchTemplateName: HCOMSecure
+      VersionDescription: Enforce IMDSv2
+
+  
+  # primary region
+
+  EC2ServerRole:
+    Type: AWS::IAM::Role
+    Condition: isPrimary
+    Properties: 
+      RoleName: HCOM-EC2-Server-Role-Lab
+      Description: used by EC2
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns: 
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonS3ReadOnlyAccess'
+      Path: /
+      Policies: 
+        - PolicyName: HCOM-CrossAccount-automation
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'kms:Decrypt'
+                Resource: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+  
+  EC2IamRole:
+    Type: AWS::IAM::InstanceProfile
+    Condition: isPrimary
+    Properties: 
+      InstanceProfileName: HCOM-EC2Profile-Lab
+      Path: "/"
+      Roles: 
+        - !Ref EC2ServerRole
+
+  LINUX1EC2:
+    Type: 'AWS::EC2::Instance'
+    Condition: isPrimary
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref MSPPrvSubNet
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+        - DeviceName: /dev/sda2
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+      InstanceType: t3a.micro
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", Linux]
+      IamInstanceProfile: !Ref EC2IamRole
+      Tags:
+        - Key: Name
+          Value: !Sub '${TenantName}-Linux1'
+        - Key: CloudWatch-Profile
+          Value: 11
+        - Key: State-Profile
+          Value: 1
+        - Key: Owner
+          Value: tom.moore@gdit.com
+        - Key: Environment
+          Value: DEV
+        - Key: Role
+          Value: WebServer
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            sudo yum update -y
+            sudo amazon-linux-extras install epel -y
+            sudo amazon-linux-extras enable epel
+            echo '--- install salt-minion ---'
+            sudo rpm --import https://repo.saltproject.io/salt/py3/amazon/2/x86_64/latest/SALTSTACK-GPG-KEY.pub  
+            curl -fsSL https://repo.saltproject.io/salt/py3/amazon/2/x86_64/latest.repo   | sudo tee /etc/yum.repos.d/salt-amzn.repo
+            sudo yum clean expire-cache
+            sudo yum install salt-minion -y
+            sudo systemctl enable salt-minion && sudo systemctl start salt-minion
+            echo '--- install AWS cli ---'
+            #sudo curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            #unzip awscliv2.zip
+            #sudo ./aws/install
+            sudo yum -y install awscli
+            sleep 10
+            aws configure set region us-gov-east-1
+
+  LINUX2EC2:
+    Type: 'AWS::EC2::Instance'
+    Condition: isPrimary
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref MSPPrvSubNet2
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+        - DeviceName: /dev/sda2
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+      InstanceType: t3a.micro
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", Linux]
+      IamInstanceProfile: !If [isPrimary, !Ref EC2IamRole,!Ref EC2IamRole2 ]
+      Tags:
+        - Key: Name
+          Value: !Sub '${TenantName}-Linux2'
+        - Key: CloudWatch-Profile
+          Value: 11
+        - Key: State-Profile
+          Value: 1
+        - Key: Owner
+          Value: !Ref OwnerTag
+        - Key: Environment
+          Value: TEST
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            sudo amazon-linux-extras install epel -y
+            sudo amazon-linux-extras enable epel
+            sudo yum update -y
+            echo '--- install Ansible Agent ---'
+            sudo yum install ansible -y  
+            #sudo systemctl enable ansible && sudo systemctl start ansible
+            echo '--- install AWS cli ---'
+            #curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            #unzip awscliv2.zip
+            #sudo ./aws/install
+            sudo yum -y install awscli
+            sleep 10
+            aws configure set region us-gov-east-1
+
+  Win1EC2:
+    Type: 'AWS::EC2::Instance'
+    Condition: isPrimary
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref MSPPrvSubNet
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '30'
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+        - DeviceName: /dev/sda2
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+      InstanceType: t3a.micro
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", Win]
+      IamInstanceProfile: !If [isPrimary, !Ref EC2IamRole,!Ref EC2IamRole2 ]
+      Tags:
+        - Key: Name
+          Value: !Sub '${TenantName}-Win1'
+        - Key: CloudWatch-Profile
+          Value: 12
+        - Key: State-Profile
+          Value: 1
+        - Key: Owner
+          Value: tom.moore@gdit.com
+        - Key: Environment
+          Value: DEV
+      UserData:
+        Fn::Base64:
+          !Sub |
+            <powershell>
+            # install aws cli
+            msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi /qn
+            </powershell>
+
+  Win2EC2:
+    Type: 'AWS::EC2::Instance'
+    Condition: isPrimary
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref MSPPrvSubNet2
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '30'
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+        - DeviceName: /dev/sda2
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+      InstanceType: t3a.micro
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", Win]
+      IamInstanceProfile: !If [isPrimary, !Ref EC2IamRole,!Ref EC2IamRole2 ] 
+      Tags:
+        - Key: Name
+          Value: !Sub '${TenantName}-Win2'
+        - Key: CloudWatch-Profile
+          Value: 12
+        - Key: State-Profile
+          Value: 1
+        - Key: Owner
+          Value: tom.moore@gdit.com
+        - Key: Environment
+          Value: TEST
+      UserData:
+        Fn::Base64:
+          !Sub |
+            <powershell>
+            # install aws cli
+            msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi /qn
+            </powershell>
+
+
+  # Secondary region
+  
+  EC2ServerRole2:
+    Type: AWS::IAM::Role
+    Condition: isSecondary
+    Properties: 
+      RoleName: HCOM-EC2-Server-Role-Lab-Secondary
+      Description: used by EC2
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns: 
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonS3ReadOnlyAccess'
+      Path: /
+      Policies: 
+        - PolicyName: HCOM-CrossAccount-automation
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'kms:Decrypt'
+                Resource: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+  
+  EC2IamRole2:
+    Type: AWS::IAM::InstanceProfile
+    Condition: isSecondary
+    Properties: 
+      InstanceProfileName: HCOM-EC2Profile-Lab2
+      Path: "/"
+      Roles: 
+        - !Ref EC2ServerRole2
+
+  LINUX1EC2West:
+    Type: 'AWS::EC2::Instance'
+    Condition: isSecondary
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref HCOMSecureLaunchTemplate
+        Version: !GetAtt [HCOMSecureLaunchTemplate, LatestVersionNumber] 
+      AvailabilityZone: !Select [0, !GetAZs ]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref MSPPrvSubNet
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            #Encrypted: true
+            #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+        - DeviceName: /dev/sda2
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            #Encrypted: true
+            #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+      InstanceType: t3a.micro
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", Linux]
+      IamInstanceProfile: !Ref EC2IamRole2
+      Tags:
+        - Key: Name
+          Value: !Sub '${TenantName}-Linux1'
+        - Key: CloudWatch-Profile
+          Value: 12
+        - Key: State-Profile
+          Value: 1
+        - Key: Owner
+          Value: tom.moore@gdit.com
+        - Key: Environment
+          Value: DEV
+        - Key: Role
+          Value: WebServer
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            sudo yum update -y
+            sudo amazon-linux-extras install epel -y
+            sudo amazon-linux-extras enable epel
+            echo '--- install salt-minion ---'
+            sudo rpm --import https://repo.saltproject.io/salt/py3/amazon/2/x86_64/latest/SALTSTACK-GPG-KEY.pub  
+            curl -fsSL https://repo.saltproject.io/salt/py3/amazon/2/x86_64/latest.repo   | sudo tee /etc/yum.repos.d/salt-amzn.repo
+            sudo yum clean expire-cache
+            sudo yum install salt-minion -y
+            sudo systemctl enable salt-minion && sudo systemctl start salt-minion
+            echo '--- install AWS cli ---'
+            #sudo curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            #unzip awscliv2.zip
+            #sudo ./aws/install
+            sudo yum -y install awscli
+            sleep 10
+            aws configure set region us-gov-east-1
+            # mount additional volumes
+            sudo mkfs -t ext4 /dev/sda1
+            sudo mkfs -t ext4 /dev/sda2
+            sudo mkdir /data
+            sudo mount /dev/sda1 /data
+            sudo mkdir /data2
+            sudo mount /dev/sda2 /datad
+
+  LINUX2EC2West:
+    Type: 'AWS::EC2::Instance'
+    Condition: isSecondary
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref MSPPrvSubNet2
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            #Encrypted: true
+            #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+        - DeviceName: /dev/sda2
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            #Encrypted: true
+            #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+      InstanceType: t3a.micro
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", Linux]
+      IamInstanceProfile: !Ref EC2IamRole2
+      Tags:
+        - Key: Name
+          Value: !Sub '${TenantName}-Linux2'
+        - Key: CloudWatch-Profile
+          Value: 12
+        - Key: State-Profile
+          Value: 1
+        - Key: Owner
+          Value: !Ref OwnerTag
+        - Key: Environment
+          Value: TEST
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            sudo amazon-linux-extras install epel -y
+            sudo amazon-linux-extras enable epel
+            sudo yum update -y
+            echo '--- install Ansible Agent ---'
+            sudo yum install ansible -y  
+            #sudo systemctl enable ansible && sudo systemctl start ansible
+            echo '--- install AWS cli ---'
+            #curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            #unzip awscliv2.zip
+            #sudo ./aws/install
+            sudo yum -y install awscli
+            sleep 10
+            aws configure set region us-gov-east-1
+
+  Win1EC2West:
+    Type: 'AWS::EC2::Instance'
+    Condition: isSecondary
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref HCOMSecureLaunchTemplate
+        Version: !GetAtt [HCOMSecureLaunchTemplate, LatestVersionNumber]       
+      AvailabilityZone: !Select [0, !GetAZs ]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref MSPPrvSubNet
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '30'
+            DeleteOnTermination: true
+            #Encrypted: true
+            #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+        - DeviceName: /dev/sda2
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            #Encrypted: true
+            #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+      InstanceType: t3a.micro
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", Win]
+      IamInstanceProfile: !Ref EC2IamRole2
+      Tags:
+        - Key: Name
+          Value: !Sub '${TenantName}-Win1'
+        - Key: CloudWatch-Profile
+          Value: 12
+        - Key: State-Profile
+          Value: 1
+        - Key: Owner
+          Value: tom.moore@gdit.com
+        - Key: Environment
+          Value: DEV
+      UserData:
+        Fn::Base64:
+          !Sub |
+            <powershell>
+            # install aws cli
+            msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi /qn
+            </powershell>
+
+  Win2EC2West:
+    Type: 'AWS::EC2::Instance'
+    Condition: isSecondary
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: 0
+          SubnetId: !Ref MSPPrvSubNet2
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '30'
+            DeleteOnTermination: true
+            #Encrypted: true
+            #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+        - DeviceName: /dev/sda2
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: '8'
+            DeleteOnTermination: true
+            #Encrypted: true
+            #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${CentralKey}'
+      InstanceType: t3a.micro
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", Win]
+      IamInstanceProfile: !Ref EC2IamRole2
+      Tags:
+        - Key: Name
+          Value: !Sub '${TenantName}-Win2'
+        - Key: CloudWatch-Profile
+          Value: 12
+        - Key: State-Profile
+          Value: 1
+        - Key: Owner
+          Value: tom.moore@gdit.com
+        - Key: Environment
+          Value: TEST
+      UserData:
+        Fn::Base64:
+          !Sub |
+            <powershell>
+            # install aws cli
+            msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi /qn
+            </powershell>
+
+
+  HCOMVPC:
+    Type: AWS::EC2::VPC
+    Properties: 
+        CidrBlock: 10.1.0.0/16
+        EnableDnsHostnames: true
+        EnableDnsSupport: true
+        Tags: 
+        - Key: Name
+          Value: HCOM-VPC
+        - Key: Owner
+          Value: tom.moore@gdit.com
+
+  HCOMIG:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: HCOMVPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: HCOM-IG
+
+  MSPAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: 
+      InternetGatewayId: String
+      VpcId: !Ref HCOMVPC
+      InternetGatewayId: !Ref HCOMIG
+          
+  MSPPubSubNet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref HCOMVPC
+      CidrBlock: 10.1.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: HCOM-Public-1
+
+  MSPPrvSubNet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref HCOMVPC
+      CidrBlock: 10.1.50.0/24
+      AvailabilityZone: !Select [0, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: HCOM-Private-1
+  
+  MSPPubSubNet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref HCOMVPC
+      CidrBlock: 10.1.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: HCOM-Public-2
+
+  MSPPrvSubNet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref HCOMVPC
+      CidrBlock: 10.1.51.0/24
+      AvailabilityZone: !Select [1, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: HCOM-Private-2
+
+  MSPPubRteTbl:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref HCOMVPC
+      Tags:
+      - Key: Name
+        Value: HCOM-Public-1
+
+  MSPPubRte:
+    Type: AWS::EC2::Route
+    DependsOn: MSPAttach
+    Properties:
+      RouteTableId: !Ref MSPPubRteTbl
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref HCOMIG
+
+  MSPPrvRteTbl:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref HCOMVPC
+      Tags:
+      - Key: Name
+        Value: HCOM-Private-1
+
+  MSPPrvRte:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref MSPPrvRteTbl
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref MSPNATG
+
+  MSPNATG:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt MSPEIP.AllocationId
+      SubnetId: !Ref MSPPubSubNet
+      Tags:
+      - Key: Name
+        Value: HCOM-NAT
+  
+  MSPEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: VPC
+
+  MSPPubSubRTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MSPPubSubNet
+      RouteTableId: !Ref MSPPubRteTbl
+
+  MSPPrvSubRTAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MSPPrvSubNet
+      RouteTableId: !Ref MSPPrvRteTbl
+
+  MSPPubSubRTAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MSPPubSubNet2
+      RouteTableId: !Ref MSPPubRteTbl
+
+  MSPPrvSubRTAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MSPPrvSubNet2
+      RouteTableId: !Ref MSPPrvRteTbl
+
+  MSPRGWebServers:
+    Type: AWS::ResourceGroups::Group
+    Properties:
+      Description: Sample Resource Group for Web Servers
+      Name: HCOM-Central-WebServers
+      ResourceQuery:
+        Type:
+          "TAG_FILTERS_1_0"
+        Query:
+          ResourceTypeFilters:
+            - "AWS::EC2::Instance"
+          TagFilters:
+            -
+              Key: "Role"
+              Values:
+                - "WebServer"
+      Tags:
+        - 
+          Key: "Owner"
+          Value: !Ref OwnerTag
+
+  MSPRDSDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Condition: CreateRDS
+    Properties: 
+      DBSubnetGroupDescription: private subnet for lab instances
+      SubnetIds: 
+        - !Ref MSPPrvSubNet2
+        - !Ref MSPPrvSubNet
+      Tags: 
+        - 
+          Key: "Owner"
+          Value: !Ref OwnerTag
+
+  MSPRDSDBCluster:
+    Type: 'AWS::RDS::DBCluster'
+    Condition: CreateRDS
+    Properties:
+      DBClusterIdentifier: !Ref DBClusterID
+      Engine: aurora-mysql
+      EngineMode: provisioned
+      MasterUsername: iamthemasterusername123
+      MasterUserPassword: iamthemasteruserpassword123
+      DBSubnetGroupName: !Ref MSPRDSDBSubnetGroup
+      Tags: 
+        - 
+          Key: "Owner"
+          Value: !Ref OwnerTag
+    DependsOn: MSPPrvSubNet2
+
+  MSPRDSDB:
+    Type: 'AWS::RDS::DBInstance'
+    Condition: CreateRDS
+    Properties:
+      DBClusterIdentifier: !Ref MSPRDSDBCluster
+      DBInstanceIdentifier: !Ref DBInstanceID
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: aurora-mysql
+      LicenseModel: general-public-license
+      PubliclyAccessible: False
+      DBSubnetGroupName: !Ref MSPRDSDBSubnetGroup
+      Tags: 
+        - 
+          Key: "Environment"
+          Value: "DEV"
+        - 
+          Key: "CloudWatch-Profile"
+          Value: "11"
+        - 
+          Key: "Owner"
+          Value: !Ref OwnerTag
+    DependsOn: MSPRDSDBCluster
+
+  MSPEncryptDynamoDB:
+    Type: AWS::DynamoDB::Table
+    Condition: CreateEncryptDynamoDB
+    Properties: 
+      AttributeDefinitions:
+        - 
+          AttributeName: 'hcomtype'
+          AttributeType: 'S'
+        -
+          AttributeName: 'hcomname'
+          AttributeType: 'S'
+      KeySchema: 
+        - 
+          AttributeName: "hcomtype"
+          KeyType: "HASH"
+        - 
+          AttributeName: "hcomname"
+          KeyType: "RANGE"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "1"
+        WriteCapacityUnits: "1"
+      ImportSourceSpecification:
+        InputFormat: "DYNAMODB_JSON"
+        S3BucketSource: 
+          S3Bucket: "hcom-software-distribution-059633105265"
+          S3KeyPrefix: "db/platform-configuration-test.json"
+      TableClass: STANDARD
+      TableName: "hcomtest-dynamodb"
+      Tags: 
+        - 
+          Key: "Environment"
+          Value: "DEV"
+        - 
+          Key: "CloudWatch-Profile"
+          Value: "1"
+      SSESpecification:
+        KMSMasterKeyId: !Ref CentralKey
+        SSEEnabled: true
+        SSEType: "KMS"
+
+  MSPDynamoDB:
+    Type: AWS::DynamoDB::Table
+    Condition: CreateDynamoDB
+    Properties: 
+      AttributeDefinitions:
+        - 
+          AttributeName: 'hcomtype'
+          AttributeType: 'S'
+        -
+          AttributeName: 'hcomname'
+          AttributeType: 'S'
+      KeySchema: 
+        - 
+          AttributeName: "hcomtype"
+          KeyType: "HASH"
+        - 
+          AttributeName: "hcomname"
+          KeyType: "RANGE"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "1"
+        WriteCapacityUnits: "1"
+      TableClass: STANDARD
+      TableName: "hcomtest-dynamodb"
+      Tags: 
+        - 
+          Key: "Environment"
+          Value: "DEV"
+        - 
+          Key: "CloudWatch-Profile"
+          Value: "11"
