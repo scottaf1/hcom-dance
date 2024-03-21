@@ -4,12 +4,12 @@ Description: "Creates HCOM S3 Distribution bucket for staging deployment files i
 Parameters:
   PrincipalOrgID:
     Type: String
-    Default: 'o-replacewithorg'
+    Default: 'o-cl2ap4dbzk'
     Description: Replace with the principal Organization ID from AWS Organizations. This is required to enable multi / cross-account features that provide centralized management and automation.
 
   OwnerTag:
     Type: String
-    Default: 'reaplce@email.com'
+    Default: 'sfinberg@outlook.com'
     Description: Replace with the email for the system Owner tag that will be added to all AWS resources created
 
 Resources:
