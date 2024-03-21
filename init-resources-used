@@ -9,13 +9,16 @@ Organizational unit: hcom-sandbox
     ARN
     arn:aws-us-gov:organizations::218803891742:ou/o-cl2ap4dbzk/ou-idx9-6mkdmn4r
 
-Tenant1-
+Tenant1: null
+    
+Tenant2: null
+    
 
-Tenant2-
+Cloudtrail enabled for install 
+    https://us-gov-west-1.console.amazonaws-us-gov.com/cloudtrail/home?region=us-gov-west-1#/trails/arn:aws-us-gov:cloudtrail:us-gov-west-1:218803891742:trail/management-events
 
-Cloudtrail enabled for install - https://us-gov-west-1.console.amazonaws-us-gov.com/cloudtrail/home?region=us-gov-west-1#/trails/arn:aws-us-gov:cloudtrail:us-gov-west-1:218803891742:trail/management-events
-
-bucket for cf templates and outputs - https://console.amazonaws-us-gov.com/s3/buckets/aws-cloudtrail-logs-218803891742-4a2abc8f/AWSLogs/218803891742/?region=us-gov-west-1
+S3 ucket for cf templates and outputs
+    https://console.amazonaws-us-gov.com/s3/buckets/aws-cloudtrail-logs-218803891742-4a2abc8f/AWSLogs/218803891742/?region=us-gov-west-1
 
 
 
