@@ -50,7 +50,14 @@ There are multiple deployment scenarios:
     * templates  
         * copy all HCOM-CF-\*  template files into this folder  
         * copy these files as well: amazon-cloudwatch-agent-ctl.ps1, amazon-cloudwatch-agent-ctl.sh, amazon-ssm-agent.json, custom-metric-status.txt  
-  
+
+        <<< Completed outputs >>>
+CentralAccountOut	218803891742	Central HCOM Management account	HCOM-CentralAccount
+CentralRegionOut	us-gov-west-1	Central HCOM Management Region for cenral Account	HCOM-CentralRegion
+OwnerTagOut	sfinberg@outlook.com	HCOM Owner Tag is added when AWS resources are created	HCOM-OwnerTag
+PrincipalOrgIdOut	o-cl2ap4dbzk	AWS Organization PrincipalOrgID	HCOM-PrincipalOrgID
+        <<< Completed outputs >>>
+        
 2. Gather required information for use with the CloudFormation Templates to deploy the solution. Template: HCOM-CF-Ops-Foundation-Step-2.yaml
 
     * AWS PrincipalOrgID <<< o-cl2ap4dbzk >>> (usually something like o-xxxxxxxx). All AWS accounts must be part of this organization.
