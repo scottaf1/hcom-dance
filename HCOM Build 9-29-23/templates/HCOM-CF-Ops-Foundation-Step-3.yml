@@ -4,19 +4,19 @@ Description: "Provides Secure AWS Operations Management Platform foundation impl
 Parameters:
   PrincipalOrgID:
     Type: String
-    Default: 'o-replaceorg'
+    Default: 'o-cl2ap4dbzk'
     Description: Replace with the principal Organization ID from AWS Organizations. This is required to enable multi / cross-account features that provide centralized management and automation.
 
   CentralAccount:
     Type: String
-    Default: 'account'
+    Default: '218803891742'
     Description: Replace with the AWS Account number for the central / management account. For single account environments provide the single AWS account number.
 
   CentralTenantName:
     Type: String
     Default: 'VDMS'
     Description: Provide a Tenant name for the the primary AWS Account used for the central / management account where this will be deployed.
-  
+
   CentralAcctName:
     Type: String
     Default: 'Mgmt'
@@ -24,7 +24,7 @@ Parameters:
 
   CentralRegion:
     Type: String
-    Default: 'us-gov-east-1'
+    Default: 'us-gov-west-1'
     Description: Provide the primary AWS Region for the central / management account where this will be deployed.
     AllowedValues:
       - us-gov-east-1
@@ -36,7 +36,7 @@ Parameters:
       - us-east-2
       - us-west-1
       - us-west-2
-      
+
 
   #1stTenantAccount:
   #  Type: String
@@ -55,7 +55,7 @@ Parameters:
 
   OwnerTag:
     Type: String
-    Default: 'replace@email.com'
+    Default: 'sfingberg@outlook.com'
     Description: Replace with the email for the system Owner tag that will be added to all resources that support the tags and added to SNS topics.
 
   HCOMKeyId:
@@ -72,14 +72,14 @@ Parameters:
       - arm64
   PlatformOpsAdminRole:
     Type: String
-    Default: 'replacwithplatformopsadminrole'
+    Default: 'platform-hcom-role1'
     Description: Provide the AWS Role name for your PlatformOps Adminstrators. This role must already exist and be used by the person deploying this template. This role must include KMS permissions for the HCOM KMS key that will be created and used for HCOM. For Reserved SSO roles you may need to include everythinhg past the :role/ in the arn.
 
 
 Resources:
   TenantHelpDeskSNS:
     Type: AWS::SNS::Topic
-    Properties: 
+    Properties:
       TopicName: !Sub "HCOM-${CentralTenantName}-${CentralAcctName}-Help-Desk"
       #KmsMasterKeyId: !GetAtt [HCOMKey, KeyId]
       KmsMasterKeyId: !Ref HCOMKeyId
@@ -92,7 +92,7 @@ Resources:
 
   TenantGeneralSNS:
     Type: AWS::SNS::Topic
-    Properties: 
+    Properties:
       TopicName: !Sub "HCOM-${CentralTenantName}-${CentralAcctName}-General"
       #KmsMasterKeyId: !GetAtt [HCOMKey, KeyId]
       KmsMasterKeyId: !Ref HCOMKeyId
@@ -105,7 +105,7 @@ Resources:
 
   CentralPlatformSNS:
     Type: AWS::SNS::Topic
-    Properties: 
+    Properties:
       TopicName: "HCOM-Central-Alerts"
       #KmsMasterKeyId: !GetAtt [HCOMKey, KeyId]
       KmsMasterKeyId: !Ref HCOMKeyId
@@ -126,7 +126,7 @@ Resources:
 
   CentralPlatformAutomationSNS:
     Type: AWS::SNS::Topic
-    Properties: 
+    Properties:
       TopicName: "HCOM-Central-Automations"
       #KmsMasterKeyId: !GetAtt [HCOMKey, KeyId]
       KmsMasterKeyId: !Ref HCOMKeyId
@@ -142,9 +142,9 @@ Resources:
       Endpoint: !GetAtt [PlatformAutomationQueue, Arn]
       Protocol: sqs
       TopicArn: !Ref CentralPlatformAutomationSNS
-      #FilterPolicy: !Sub | 
+      #FilterPolicy: !Sub |
       #  {"AlarmName": [{"exists": true}]}
-      RedrivePolicy: !Sub | 
+      RedrivePolicy: !Sub |
         {"deadLetterTargetArn": "arn:${AWS::Partition}:sqs:${AWS::Region}:${CentralAccount}:${PlatformAutomationSQSDLQ}"}
 
 
@@ -170,7 +170,7 @@ Resources:
               - "SQS:SendMessage"
             Effect: "Allow"
             Resource: !GetAtt DeadLetterQueue.Arn
-            Principal: 
+            Principal:
               Service:
                 - "events.amazonaws.com"
             #Condition:
@@ -181,10 +181,10 @@ Resources:
 
   HCOMKey:
     Type: AWS::KMS::ReplicaKey
-    Properties: 
+    Properties:
       Description: Secondary Region HCOM Replica
       Enabled: true
-      KeyPolicy: !Sub | 
+      KeyPolicy: !Sub |
         {
         "Version": "2012-10-17",
         "Id": "key-consolepolicy-3",
@@ -317,7 +317,7 @@ Resources:
         }
       PendingWindowInDays: 30
       PrimaryKeyArn: !Sub 'arn:${AWS::Partition}:kms:${CentralRegion}:${CentralAccount}:key/${HCOMKeyId}'
-      Tags: 
+      Tags:
         - Key: Owner
           Value: !Ref OwnerTag
 
@@ -330,7 +330,7 @@ Resources:
 
   CentralBackupVault:
     Type: AWS::Backup::BackupVault
-    Properties: 
+    Properties:
       AccessPolicy:
         Version: "2012-10-17"
         Statement:
@@ -341,12 +341,12 @@ Resources:
               Condition:
                 StringEquals:
                   aws:PrincipalOrgID: !Ref PrincipalOrgID
-              
+
       BackupVaultName: Central-Backup-Vault
       LockConfiguration:
         MinRetentionDays: 2
         MaxRetentionDays: 7
-      BackupVaultTags: 
+      BackupVaultTags:
         "DestinationBackupVault": True
         "Owner": !Ref OwnerTag
       EncryptionKeyArn: !GetAtt [HCOMKey, Arn]
@@ -370,8 +370,8 @@ Resources:
 
   HCOMLambdaLayer:
     Type: AWS::Lambda::LayerVersion
-    Properties: 
-      CompatibleRuntimes: 
+    Properties:
+      CompatibleRuntimes:
         - python3.10
         - python3.9
         - python3.8
@@ -389,14 +389,14 @@ Resources:
       Architectures: !Ref LambdaArchitecture
       Runtime: python3.10
       Timeout: 30
-      MemorySize: 128 
+      MemorySize: 128
       Role: !Sub 'arn:${AWS::Partition}:iam::${CentralAccount}:role/HCOM-Lambda-Automation'
       Handler: index.lambda_handler
-      Code: 
+      Code:
         S3Bucket: !Ref S3LambdaBucket
         S3Key: lambdas/SQS-Processor.zip
       Description: Triggered by EC2 state change SQS items for processing
-      DeadLetterConfig: 
+      DeadLetterConfig:
         TargetArn:  !GetAtt PlatformAutomationSQSDLQ.Arn
       Layers:
         - !Ref HCOMLambdaLayer
@@ -406,7 +406,7 @@ Resources:
 
   HCOMSQSProcessorLambdaLogs:
     Type: AWS::Logs::LogGroup
-    Properties: 
+    Properties:
       LogGroupName: !Sub /aws/lambda/${HCOMSQSProcessorLambda}
       KmsKeyId: !GetAtt [HCOMKey, Arn]
       #KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${CentralAccount}:key/${HCOMKeyId}'
@@ -442,7 +442,7 @@ Resources:
       Tags:
             - Key: "Owner"
               Value: !Ref OwnerTag
-  
+
   # policy for main automation queue
   PlatfomrAutomationQueuePolicy:
     Type: AWS::SQS::QueuePolicy
@@ -481,7 +481,7 @@ Resources:
               - "SQS:SendMessage"
             Effect: "Allow"
             Resource: !GetAtt PlatformAutomationQueue.Arn
-            Principal: 
+            Principal:
               Service:
                 - "sns.amazonaws.com"
             Condition:
@@ -493,12 +493,12 @@ Resources:
               - "SQS:SendMessage"
             Effect: "Allow"
             Resource: !GetAtt PlatformAutomationQueue.Arn
-            Principal: 
+            Principal:
               Service:
                 - "events.amazonaws.com"
       Queues:
         - !Ref PlatformAutomationQueue
-  
+
   # DLQ for main automation queue
   #PlatformAutomationSQSDLQ:
   #  Type: AWS::SQS::Queue
@@ -508,7 +508,7 @@ Resources:
   #    Tags:
   #          - Key: "Owner"
   #            Value: !Ref OwnerTag
-  
+
   # DLQ for main automation queue
   PlatformAutomationSQSDLQ:
     Type: AWS::SQS::Queue
@@ -526,13 +526,13 @@ Resources:
       BatchSize: 1
       ScalingConfig:
         MaximumConcurrency: 50
-      Enabled: true 
+      Enabled: true
       EventSourceArn: !GetAtt PlatformAutomationQueue.Arn
       FunctionName: !GetAtt HCOMSQSProcessorLambda.Arn
-  
+
   HCOMPrimaryRegion:
     Type: AWS::SSM::Parameter
-    Properties: 
+    Properties:
       DataType: text
       Description: Primary Region for HCOM deployment
       Name: HCOM-Primary-Region
@@ -544,15 +544,15 @@ Outputs:
   #CentralKMSKeyArn:
   #  Description: KMS key ARN to be used by tenant accounts
   #  Value: !GetAtt HCOMKey.Arn
-  #  Export: 
+  #  Export:
   #    Name: CentralKmsKeyArn
   CentralAccount:
     Description: Central HCOM Management account
     Value: !Ref CentralAccount
-    Export: 
+    Export:
       Name: CentralAccount
   CentralRegion:
     Description: Central HCOM Management Region for cenral Account
     Value: !Ref CentralRegion
-    Export: 
+    Export:
       Name: CentralRegion

@@ -84,6 +84,9 @@ PrincipalOrgIdOut	o-cl2ap4dbzk	AWS Organization PrincipalOrgID	HCOM-PrincipalOrg
     *   There are central platform settings called "centralaccount" on the first line of the JSON that you need to update that are not configurable at any other time without going into the database later. You specify if you want a central webhook for messaging, set the channel name and url and webhook to true. To disable set webhook to false. You control using a central SNS topic for alerts. There is a default topic that will be created automatically. You can change it here if you want to use an existing SNS Topic (just replace the current topic name with the one you want to use).
     *   Optional, replace central management Tenant name "VDMS" with your preferred tenant name for the management account where the HCOM platform Ops Foundation templates will be deployed
     *   Once you have made all the updates, save it and re-upload to the db folder in the distribution S3 bucket created in step 1.
+
+<<<< Completed >>> 
+
 ***
 ## Ops Foundation Platform
 ## Installation in Central / Monitoring Account
