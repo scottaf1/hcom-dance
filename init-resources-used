@@ -1,5 +1,8 @@
 repo -https://github.com/scottaf1/hcom-dance
 
+AWS
+    region: AWS GovCloud (US-Gov-West)us-gov-west-1
+
 Parent Org ID: o-cl2ap4dbzk
     ID: r-idx9
 
@@ -24,5 +27,12 @@ Cloudtrail enabled for install
 S3 bucket for cf templates and outputs
     https://console.amazonaws-us-gov.com/s3/buckets/aws-cloudtrail-logs-218803891742-4a2abc8f/AWSLogs/218803891742/?region=us-gov-west-1
 
+    All S3 Buckets
+        aws-cloudtrail-logs-218803891742-4a2abc8f	AWS GovCloud (US-West) us-gov-west-1	
+	    March 20, 2024, 19:30:42 (UTC-04:00)
+	    cf-templates-9pqt5pg72006-us-gov-west-1	AWS GovCloud (US-West) us-gov-west-1	
+	    March 20, 2024, 21:50:52 (UTC-04:00)
+	    hcom-software-distribution-218803891742-us-gov-west-1	AWS GovCloud (US-West) us-gov-west-1	
+	    March 20, 2024, 22:33:39 (UTC-04:00)
 
 

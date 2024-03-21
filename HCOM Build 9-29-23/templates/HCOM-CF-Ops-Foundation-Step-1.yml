@@ -5,12 +5,12 @@ Parameters:
   PrincipalOrgID:
     Type: String
     Default: 'o-cl2ap4dbzk'
-    Description: Replace with the principal Organization ID from AWS Organizations. This is required to enable multi / cross-account features that provide centralized management and automation.
+    Description: the principal Organization ID from AWS Organizations
 
   OwnerTag:
     Type: String
     Default: 'sfinberg@outlook.com'
-    Description: Replace with the email for the system Owner tag that will be added to all AWS resources created
+    Description: email for the system Owner tag
 
 Resources:
   HCOMOpsDistributionBucket:
