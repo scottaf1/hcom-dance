@@ -38,7 +38,7 @@ Parameters:
 
   PlatformOpsAdminRole:
     Type: String
-    Default: 'aws-reserved/sso.amazonaws.com/AWSReservedSSO_AdministratorAccess_9405213f83933cdd'
+    Default: 'platform-hcom-role1'
     Description: Provide the AWS Role name for your PlatformOps Adminstrators. This role must already exist and be used by the person deploying this template. This role must include KMS permissions for the HCOM KMS key that will be created and used for HCOM. For Reserved SSO roles you may need to include everythinhg past the :role/ in the arn.
 
   #GetHCOMVPC:
