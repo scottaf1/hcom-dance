@@ -75,7 +75,7 @@ PrincipalOrgIdOut	o-cl2ap4dbzk	AWS Organization PrincipalOrgID	HCOM-PrincipalOrg
         CentralRegion	us-gov-west-1	Central HCOM Management Region	CentralRegion
         <<< Completed outputs >>>
 
-3. Do a find/replace on platform-configuration.json found in the db folder for each of the following settings prior to deploying the CF templates:
+<<<< START >>>  3. Do a find/replace on platform-configuration.json found in the db folder for each of the following settings prior to deploying the CF templates:
     *   replace "000000000000" with the central management account AWS account number
     *   replace "o-xxxxxxxxxx" with the AWS PrincipalOrgID that all AWS accounts to be managed are part of
     *   replace "PrimaryRegion" with the primary region name (Ex. us-gov-east-1) in the central management account where the Ops Foundation template will be deployed.
