@@ -1,9 +1,9 @@
-{"Item":{"msptype":{"S":"core"},"mspname": {"S": "centralaccount"},"account": {"S": "000000000000"},"alerts": {"S": "arn:aws-us-gov:sns:region:centralaccount:HCOM-Central-Alerts"},"channel-name": {"S": "collaboration"},"channel-url": {"S": "https://hooks.slack.com/services/replace/replace"},"KMSAlias": {"S": "HCOM-Key"},"platform": {"S": "GDIT Hive Hybrid Cloud Operations Manager (HCOM)"},"PrincipalOrgID": {"S": "o-xxxxxxxxxx"},"region": {"S": "PrimaryRegion"},"reportregions": {"L": [{"S": "PrimaryRegion"},{"S": "SecondaryRegion"}]},"tenant": {"S": "VDMS"},"webhook": {"BOOL": false}}}
+{"Item":{"msptype":{"S":"core"},"mspname": {"S": "centralaccount"},"account": {"S": "218803891742"},"alerts": {"S": "arn:aws-us-gov:sns:us-gov-west-1:218803891742:HCOM-Central-Automations"},"channel-name": {"S": "collaboration"},"channel-url": {"S": "https://hooks.slack.com/services/replace/replace"},"KMSAlias": {"S": "HCOM-Key"},"platform": {"S": "GDIT Hive Hybrid Cloud Operations Manager (HCOM)"},"PrincipalOrgID": {"S": "o-cl2ap4dbzk"},"region": {"S": "us-gov-west-1"},"reportregions": {"L": [{"S": "us-gov-west-1"},{"S": "us-gov-east-1"}]},"tenant": {"S": "VDMS"},"webhook": {"BOOL": true}}}
 {"Item":{"msptype":{"S":"core"},"mspname":{"S":"tags"},"environment":{"S":"Environment"},"product":{"S":"Product"},"role":{"S":"Product-Role"},"description":{"S":"Description"},"patch":{"S":"Patch Group"}}}
 {"Item":{"msptype":{"S":"core"},"mspname":{"S":"configurations"},"CentralEB":{"S":"HCOM-Central-EB"},"account":{"S":"Profile"},"TemplatePath":{"S":"templates/"},"OpsDashboard":{"S":"VV-XX-YY-region"},"coredb":{"S":"hcom-configuration"}}}
-{"Item":{"msptype":{"S":"core"},"mspname":{"S":"email"},"developer":{"S":"AdminEmail"}}}
+{"Item":{"msptype":{"S":"core"},"mspname":{"S":"email"},"developer":{"S":"sfinberg@outlook.com"}}}
 {"Item":{"msptype":{"S":"core"},"mspname":{"S":"iam"},"Cross-Account":{"S":"arn:partition:iam::tenantaccount:role/HCOM-CrossAccount-Automation"},"LambdaRole":{"S":"arn:partition:iam::centralaccount:role/HCOM-Lambda-Automation"}}}
-{"Item":{"msptype":{"S":"core"},"mspname":{"S":"s3"},"Reports":{"S":"hcom-operations-reports-000000000000"},"Reports-region":{"S":"PrimaryRegion"},"Software":{"S":"hcom-software-distribution-000000000000-PrimaryRegion"}}}
+{"Item":{"msptype":{"S":"core"},"mspname":{"S":"s3"},"Reports":{"S":"hcom-operations-reports-218803891742"},"Reports-region":{"S":"PrimaryRegion"},"Software":{"S":"hcom-software-distribution-218803891742-PrimaryRegion"}}}
 {"Item":{"msptype":{"S":"core"},"mspname":{"S":"sqs"},"EBDLQ":{"S":"HCOM-EB-DeadLetterQueue"},"PlatformAutomationDLQ":{"S":"HCOM-PlatformAutomationDLQ"},"PlatformAutomation":{"S":"HCOM-PlatformAutomation"},"HCOM-StateChange":{"S":"HCOM-StateChange.fifo"}}}
 {"Item":{"msptype":{"S":"core"},"mspname":{"S":"topics"},"PlatformAutomation":{"S":"HCOM-PlatformAutomation"},"HelpDesk":{"S":"arn:partition:sns:region:centralaccount:HCOM-Help-Desk"},"PlatformOps-Engineers":{"S":"arn:partition:sns:region:centralaccount:HCOM-PlatformOps-Engineers"}}}
 {"Item":{"msptype":{"S":"core"},"mspname":{"S":"webhooks"},"Sender":{"S":"GDIT Hive Hybrid Cloud Operations Manager"},"HelpDesk":{"S":"https://something.webhook.office.com/webhookb2/something/IncomingWebhook/something/something"},"HelpDesk-channel":{"S":"GDIT Hive Hybrid Cloud Operations Manager"},"Developer-channel":{"S":"collaboration"},"Developer":{"S":"https://hooks.slack.com/services/something/something"}}}
@@ -243,9 +243,9 @@
 
 
 {"Item":{"msptype":{"S":"core"},"mspname":{"S":"software"},"ssm-agent":{"S":""},"cloudwatch-agent":{"S":""}}}
-{"Item":{"msptype":{"S":"state"},"mspname":{"S":"configurations"},"PlaybooksURL":{"S":"s3://hcom-software-distribution-000000000000/playbooks/"},"AuditReportPath":{"S":"State-Audit-Reports/"},"StateReport":{"S":"State-Audit-Report.txt"}}}
+{"Item":{"msptype":{"S":"state"},"mspname":{"S":"configurations"},"PlaybooksURL":{"S":"s3://hcom-software-distribution-218803891742/playbooks/"},"AuditReportPath":{"S":"State-Audit-Reports/"},"StateReport":{"S":"State-Audit-Report.txt"}}}
 {"Item":{"msptype":{"S":"state"},"mspname":{"S":"tags"},"profile":{"S":"State-Profile"}}}
-{"Item":{"msptype":{"S":"tenant"},"mspname":{"S":"VDMS"},"Accounts":{"L":[{"S": "000000000000"}]},"Regions":{"L":[{"S": "PrimaryRegion"}]},"Environments":{"L":[{"S": "DEV"},{"S": "TEST"},{"S": "PROD"}]}}}
+{"Item":{"msptype":{"S":"tenant"},"mspname":{"S":"VDMS"},"Accounts":{"L":[{"S": "218803891742"}]},"Regions":{"L":[{"S": "PrimaryRegion"}]},"Environments":{"L":[{"S": "DEV"},{"S": "TEST"},{"S": "PROD"}]}}}
 {"Item":{"msptype":{"S":"cw"},"mspname":{"S":"HCOM-Lifecycle-Automation-PrimaryRegion"},"reboot":{"S":"0"},"running":{"S":"0"},"stopped":{"S":"0"},"terminatedd":{"S":"0"},"enabled":{"S":"0"},"suppressed":{"S":"0"},"created":{"S":"0"},"deleted":{"S":"0"},"responses":{"S":"0"},"responseslist":{"L":[]}}}
 {"Item":{"msptype":{"S":"cw"},"mspname":{"S":"HCOM-Lifecycle-Automation-SecondaryRegion"},"reboot":{"S":"0"},"running":{"S":"0"},"stopped":{"S":"0"},"terminatedd":{"S":"0"},"enabled":{"S":"0"},"suppressed":{"S":"0"},"created":{"S":"0"},"deleted":{"S":"0"},"responses":{"S":"0"},"responseslist":{"L":[]}}}
 
@@ -4983,7 +4983,7 @@
 
 {"Item":{
 	"msptype": {"S": "tenant"},"mspname": {"S": "VDMS"},"accounts": {"L": 
-        [{ "M": {"account": {"S": "000000000000"},"acctname": {"S": "Mgmt"},"Active": {"BOOL": true},"Environments": {"L": [{"S": "TEST"},{"S": "DEV"},{"S": "PROD"},{"S": "STAGE"}]},
+        [{ "M": {"account": {"S": "218803891742"},"acctname": {"S": "Mgmt"},"Active": {"BOOL": true},"Environments": {"L": [{"S": "TEST"},{"S": "DEV"},{"S": "PROD"},{"S": "STAGE"}]},
 				"Features": {"M": {"AWSBackup": {"BOOL": false},"CloudWatch": {"BOOL": true},"OnPrem": {"BOOL": false},"SSMOpsItems": {"BOOL": false},"StateMgmt": {"BOOL": true},"Webhooks": {"BOOL": true}}},
 				"Regions": {"L": [{"S": "PrimaryRegion"},{"S": "SecondaryRegion"}]},
 				"Tags": {"M": {"description": {"S": "Description"},"environment": {"S": "Environment"},"patch": {"S": "Patch Group"},"product": {"S": "Product"},"role": {"S": "Product-Role"}}},
@@ -5670,28 +5670,28 @@
     }} 
 }}
 
-{"Item":{"msptype": {"S": "state-profile-1"},"mspname": {"S": "1"},"Account": {"S": "000000000000"},"Active": {"BOOL": false},"ChangeCalendar": {"S": "HCOM-State-Calendar"},
-  "Interval": {"BOOL": true},"Name": {"S": "HCOM-State-Profile-1-4-VDMS-000000000000-AWS-RunShellScript-tag--State-Profile-1"},
+{"Item":{"msptype": {"S": "state-profile-1"},"mspname": {"S": "1"},"Account": {"S": "218803891742"},"Active": {"BOOL": false},"ChangeCalendar": {"S": "HCOM-State-Calendar"},
+  "Interval": {"BOOL": true},"Name": {"S": "HCOM-State-Profile-1-4-VDMS-218803891742-AWS-RunShellScript-tag--State-Profile-1"},
   "parameters": {"S": "{'workingDirectory': [''], 'executionTimeout': ['3600'], 'commands': [\"echo '--- install salt-minion ---'\", \"sudo rpm --import https://repo.saltproject.io/salt/py3/amazon/2/x86_64/latest/SALTSTACK-GPG-KEY.pub \", \"curl -fsSL https://repo.saltproject.io/salt/py3/amazon/2/x86_64/latest.repo | sudo tee /etc/yum.repos.d/salt-amzn.repo\", \"sudo yum clean expire-cache\", \"sudo yum install salt-minion -y\", \"sudo systemctl enable salt-minion && sudo systemctl start salt-minion\"]}"},
   "Region": {"S": "PrimaryRegion"},"Schedule": {"S": "rate(1 hour)"},"Severity": {"S": "LOW"},"TargetKey": {"S": "tag:"},"TargetKeyName": {"S": "State-Profile"},"TargetValue": {"S": "1"},"Tenant": {"S": "VDMS"},"Type": {"S": "AWS-RunShellScript"},"V": {"S": "DEFAULT"}
 }}
 {"Item":{"msptype": {"S": "state-profile-1"},
-  "mspname": {"S": "2"},"Account": {"S": "000000000000"},"Active": {"BOOL": false},"ChangeCalendar": {"S": "HCOM-State-Calendar"},
-  "Interval": {"BOOL": true},"Name": {"S": "HCOM-State-Profile-1-2-VDMS-000000000000-AWS-RunSaltState-tag--State-Profile-1"},
-  "parameters": {"S": "{ 'stateurl': ['s3://hcom-software-distribution-000000000000/playbooks/salt/webserver.sls'], 'test': ['False']}"},
+  "mspname": {"S": "2"},"Account": {"S": "218803891742"},"Active": {"BOOL": false},"ChangeCalendar": {"S": "HCOM-State-Calendar"},
+  "Interval": {"BOOL": true},"Name": {"S": "HCOM-State-Profile-1-2-VDMS-218803891742-AWS-RunSaltState-tag--State-Profile-1"},
+  "parameters": {"S": "{ 'stateurl': ['s3://hcom-software-distribution-218803891742/playbooks/salt/webserver.sls'], 'test': ['False']}"},
   "Region": {"S": "PrimaryRegion"},"Schedule": {"S": "rate(1 hour)"},"Severity": {"S": "MEDIUM"},"TargetKey": {"S": "tag:"},"TargetKeyName": {"S": "State-Profile"},"TargetValue": {
     "S": "1"},"Tenant": {"S": "VDMS"},"Type": {"S": "AWS-RunSaltState"},"V": {"S": "DEFAULT"}
 }}
 {"Item":{"msptype": {"S": "state-profile-1"},
-  "mspname": {"S": "4"},"Account": {"S": "000000000000"},"Active": {"BOOL": false},"ChangeCalendar": {"S": "HCOM-State-Calendar"},
-  "Interval": {"BOOL": true},"Name": {"S": "HCOM-State-Profile-1-4-VDMS-000000000000-AWS-RunPatchBaseline-tag--State-Profile-1"},
+  "mspname": {"S": "4"},"Account": {"S": "218803891742"},"Active": {"BOOL": false},"ChangeCalendar": {"S": "HCOM-State-Calendar"},
+  "Interval": {"BOOL": true},"Name": {"S": "HCOM-State-Profile-1-4-VDMS-218803891742-AWS-RunPatchBaseline-tag--State-Profile-1"},
   "parameters": {"S": "{'BaselineOverride': [''], 'SnapshotId': [''], 'Operation': ['Scan'], 'RebootOption': ['RebootIfNeeded'], 'InstallOverrideList': ['']}"},
   "Region": {"S": "PrimaryRegion"},"Schedule": {"S": "rate(1 hour)"},"Severity": {"S": "MEDIUM"},"TargetKey": {"S": "tag:"},"TargetKeyName": {"S": "State-Profile"},"TargetValue": {
     "S": "1"},"Tenant": {"S": "VDMS"},"Type": {"S": "AWS-RunPatchBaseline"},"V": {"S": "DEFAULT"}
 }}
 {"Item":{"msptype": {"S": "state-profile-1"},
-  "mspname": {"S": "3"},"Account": {"S": "000000000000"},"Active": {"BOOL": false},"ChangeCalendar": {"S": "HCOM-State-Calendar"},
-  "Interval": {"BOOL": true},"Name": {"S": "HCOM-State-Profile-1-3-VDMS-000000000000-AWSEC2-ConfigureSTIG-tag--State-Profile-1"},
+  "mspname": {"S": "3"},"Account": {"S": "218803891742"},"Active": {"BOOL": false},"ChangeCalendar": {"S": "HCOM-State-Calendar"},
+  "Interval": {"BOOL": true},"Name": {"S": "HCOM-State-Profile-1-3-VDMS-218803891742-AWSEC2-ConfigureSTIG-tag--State-Profile-1"},
   "parameters": {"S": "{'Level': ['Low']}"},
   "Region": {"S": "PrimaryRegion"},"Schedule": {"S": "rate(1 hour)"},"Severity": {"S": "HIGH"},"TargetKey": {"S": "tag:"},"TargetKeyName": {"S": "State-Profile"},"TargetValue": {
     "S": "1"},"Tenant": {"S": "VDMS"},"Type": {"S": "AWSEC2-ConfigureSTIG"},"V": {"S": "DEFAULT"}
